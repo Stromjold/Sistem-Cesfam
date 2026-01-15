@@ -21,19 +21,16 @@ Sistema avanzado para comparar archivos Excel/CSV, detectar duplicados, registro
 
 ### 🔍 Comparador de Archivos (`separador_datos.py`)
 
-- **Comparación inteligente** de archivos Excel (.xlsx, .xls) y CSV
-- **Detección automática** de columnas clave (RUT, ID, documento)
-- **Normalización de datos**: Ignora mayúsculas/minúsculas y corrige formatos numéricos (ej: 12345.0 -> 12345)
-- **Lectura inteligente**: Detecta automáticamente encabezados aunque el archivo tenga títulos o filas vacías al inicio
-- **Análisis selectivo**: Duplicados, Faltantes, Incompletos o Todos
-- **Detección de duplicados por RUT** con estadísticas detalladas
-- **Interfaz de menús interactivos** en terminal
-- **Reportes Excel organizados** por tipo de análisis
-- **Soporte multi-hoja** y múltiples archivos
-- **Optimización para grandes volúmenes** (>8MB)
-- **Formato visual mejorado** con colores y tablas en terminal
-- **Guardado robusto**: Sistema "anti-bloqueo" que genera copias automáticas (con timestamp) si el archivo de reporte está abierto en Excel
-- **Estadísticas de Precisión**: Cálculo exacto de porcentajes de pérdida y coincidencia entre bases de datos
+- **NUEVO: Identificación Flexible**: Configurable entre modo "Normal" (prioriza Nombres+Apellidos) y "Personalizado" (tú eliges los campos).
+- **NUEVO: Búsqueda Interactiva**: Buscador de usuarios integrado antes de descargar los reportes.
+- **NUEVO: Formato Visual de Tabla**: Tablas estilo SQL/Grid en terminal para mejor legibilidad.
+- **Comparación inteligente** de archivos Excel (.xlsx, .xls) y CSV.
+- **Prioridad de Identificación**: Ahora el sistema prefiere identificar personas por **Nombre + Apellido Paterno + Apellido Materno** antes que por RUT, reduciendo errores por RUTs mal formateados.
+- **Diagnóstico en Terminal**: Alertas visuales inmediatas sobre la calidad de los datos (sin ensuciar el Excel final).
+- **Normalización de datos**: Ignora mayúsculas/minúsculas y corrige formatos.
+- **Lectura inteligente**: Detecta encabezados automáticamente.
+- **Análisis selectivo**: Duplicados, Incompletos o Todos.
+- **Guardado robusto**: Sistema "anti-bloqueo".
 
 ---
 
@@ -54,64 +51,55 @@ tkinter (incluido en Python estándar)
 
 ---
 
-## 🔧 Funcionamiento Detallado
+## 🔧 Funcionamiento Detallado (Paso a Paso)
 
-### 1️⃣ **Flujo Principal del Programa**
+### 1️⃣ **Configuración Inicial (NUEVO)**
+Al iniciar el programa, lo primero que verás es la configuración de búsqueda:
 
-```
-INICIO
-  ↓
-[Menú Principal]
-  ├─ 1. Comparar archivos → [Selección de archivos]
-  ├─ 2. Modo batch          ↓
-  └─ 3. Salir          [Menú de análisis]
-                             ↓
-                  ¿Qué quieres hacer?
-                    ├─ 1. Duplicados
-                    ├─ 2. Faltantes
-                    ├─ 3. Incompletos
-                    └─ 4. Todos
-                             ↓
-                    [Selección de hojas]
-                             ↓
-                       [ANÁLISIS]
-                             ↓
-                    [Generación Excel]
-                             ↓
-                     ¿Abrir archivo?
-                             ↓
-                          FIN
-```
+- **Modo Normal (Automático):** El sistema intentará identificar registros usando **Nombre + Apellido Paterno + Apellido Materno**. Si no encuentra estas columnas, usará el RUT/ID como respaldo.
+- **Modo Personalizado:** Te permite seleccionar manualmente qué campos usar para crear la clave única (ej: solo RUT, o solo Paterno + Materno).
 
-### 2️⃣ **Carga y Detección Automática**
+### 2️⃣ **Selección de Archivos**
+Selecciona los dos archivos a comparar (Base A vs Base B). El sistema soporta Excel y CSV, y puede leer cualquier hoja dentro de un Excel.
 
-#### **Lectura Inteligente de Tablas**
-- **Salto de Títulos**: Si el archivo Excel tiene títulos decorativos o filas vacías al inicio, el sistema analiza la "densidad de datos" de las primeras 20 filas para encontrar automáticamente dónde comienzan los encabezados reales.
+### 3️⃣ **Análisis y Diagnóstico**
+El sistema procesa los datos y muestra en terminal:
+- **Resumen de Faltantes:** Cuántos registros hay en A que no están en B (y viceversa).
+- **Resumen de Duplicados:** Tablas detalladas con el "Top 20" de identificadores repetidos.
+- **Diagnóstico Prioritario:** Alerta si hay una pérdida masiva de datos (>85%), visible solo en terminal.
 
-#### **Detección de Columna Clave**
-```python
-Prioridad de búsqueda ampliada:
-1. RUT, RUN, ID, DOCUMENTO, CEDULA, FICHA, FOLIO, CASO, N_SOLICITUD
-2. Columnas con >80% valores únicos
-3. Detección automática por tipo de dato
-```
+### 4️⃣ **Buscador Interactivo de Usuarios (NUEVO)**
+Antes de generar el reporte final, el sistema te preguntará:
+`¿Deseas buscar algún usuario en los resultados? (s/n)`
 
-#### **Normalización de Datos (Advanced Cleaning)**
-```python
-Proceso de limpieza profunda:
-1. Conversión a texto y Mayúsculas (ignora case sensitivity)
-2. Eliminación de espacios (trim)
-3. Corrección de decimales flotantes: "12345.0" → "12345"
-4. Generación de hash interno comparison-safe
-```
+- Puedes escribir un nombre, apellido o RUT.
+- El sistema buscará en **todas las tablas generadas** (Duplicados, Faltantes, Incompletos).
+- Te mostrará los resultados en una tabla ordenada tipo "Grid" en la terminal.
+- Puedes realizar múltiples búsquedas consecutivas.
 
-### 3️⃣ **Algoritmos de Análisis**
+### 5️⃣ **Descarga de Reportes**
+Finalmente, seleccionas qué deseas descargar a Excel.
+**Opciones Actualizadas:**
+1. **Duplicados**: Solo registros repetidos.
+2. **Incompletos**: Registros con datos vacíos.
+3. **Todos**: Incluye Duplicados e Incompletos.
 
-#### **A. Detección de Faltantes**
+> **Nota:** La resta cruda de bases (A - B) ya no se descarga por defecto para mantener la privacidad y orden, pero puedes consultar esos datos en el Buscador Interactivo.
+
+---
+
+## ⚙️ Lógica de Análisis (Glosario)
+
+#### **A. Estrategia de Identificación (Nombres vs RUT)**
+El sistema ahora construye una clave única compuesta (`__KEY__`) para cada fila.
+- **Prioridad 1:** `NOMBRE | PATERNO | MATERNO` (Más seguro, evita errores de digitación de RUT).
+- **Prioridad 2:** `RUT` normalizado (sin puntos, guion ni dígito verificador erróneo).
+
+#### **B. Detección de Faltantes**
 
 **Lógica:**
-- `faltantes_en_B` = Registros en A que NO están en B
-- `faltantes_en_A` = Registros en B que NO están en A
+- `faltantes_en_B` = Registros en A (archivo) que NO están en B (archivo)
+- `faltantes_en_A` = Registros en B (archivo) que NO están en A (archivo)
 
 **Implementación:**
 ```python
@@ -132,11 +120,11 @@ Faltantes en A (Percapita): [6, 7]  → Están en Rayen, faltan en Percapita
 TODOS los faltantes:        [1, 2, 6, 7]
 ```
 
-#### **B. Detección de Duplicados**
+#### **C. Detección de Duplicados**
 
 **Lógica:**
-- Busca RUTs que aparecen más de una vez en el MISMO archivo
-- Ordena por RUT para agrupar duplicados
+- Busca RUTs que aparecen más de una vez en el MISMO archivo.
+- Ordena por RUT para agrupar duplicados y facilitar la limpieza.
 
 **Implementación:**
 ```python
@@ -152,16 +140,13 @@ Archivo A tiene:
   RUT 34567890: 1 registro  ← No es duplicado
 
 Duplicados detectados: 5 registros (2 RUTs únicos)
-Top RUTs duplicados:
-  • 12.345.678-9: 3 registros
-  • 23.456.789-0: 2 registros
 ```
 
-#### **C. Detección de Incompletos**
+#### **D. Detección de Incompletos**
 
 **Lógica:**
-- Registros con al menos un campo vacío/nulo
-- Se excluyen columnas especiales (__KEY__, RUT)
+- Registros con al menos un campo vacío/nulo.
+- Ideal para detectar fichas de pacientes mal ingresadas.
 
 **Implementación:**
 ```python
@@ -171,15 +156,16 @@ def mark_incomplete(df, exclude_cols):
     return df[mask_incomplete]
 ```
 
-### 4️⃣ **Generación de Reportes Excel**
+## 📂 Archivos y Resultados
 
-#### **Estructura de Archivos Generados**
+#### **Nombres de Archivos**
 
-**Según análisis seleccionado:**
-- `REPORTE_DUPLICADOS.xlsx` (si solo Duplicados)
-- `REPORTE_FALTANTES.xlsx` (si solo Faltantes)
-- `REPORTE_INCOMPLETOS.xlsx` (si solo Incompletos)
-- `REPORTE_COMPLETO_COMPARACION.xlsx` (si Todos)
+**Según selección en menú:**
+- `REPORTE_DUPLICADOS.xlsx`: (Opción 1)
+- `REPORTE_INCOMPLETOS.xlsx`: (Opción 2)
+- `REPORTE_COMPLETO_COMPARACION.xlsx`: (Opción 3 - Incluye Duplicados e Incompletos)
+
+> **Nota:** La lista de **Faltantes (A-B)** se visualiza en terminal y es buscable, pero no se genera en Excel por defecto en la versión actual.
 
 #### **Estructura Interna de Hojas**
 
@@ -195,33 +181,17 @@ Hoja 3: [Tipo] en [Archivo B]
   └─ Solo datos del segundo archivo
 ```
 
-**Ejemplo para Faltantes:**
-```
-📊 REPORTE_FALTANTES.xlsx
-  ├─ TODOS - Faltantes (32,616 registros)
-  │   └─ Todos los registros que faltan en algún archivo
-  │
-  ├─ Faltantes en Rayen (16,076 registros)
-  │   └─ Registros que están en Percapita pero NO en Rayen
-  │
-  └─ Faltantes en Percapita (16,540 registros)
-      └─ Registros que están en Rayen pero NO en Percapita
-```
-
 #### **Formato Visual**
 
 **Encabezados:**
-- Fondo azul (#366092)
-- Texto blanco en negrita
-- Bordes delgados
+- Fondo azul (#366092) con texto blanco.
+- Filtros automáticos activados.
 
 **Datos:**
-- Celdas nulas/vacías: Fondo rojo con "-"
-- RUTs formateados: XX.XXX.XXX-X
-- Ajuste automático de ancho (máx 50 caracteres)
-- Alineación centrada
+- Celdas vacías resaltadas en rojo (en reporte Incompletos).
+- Columnas ajustadas automáticamente.
 
-### 5️⃣ **Optimizaciones**
+## 🧠 Lógica Interna y Optimizaciones
 
 #### **Grandes Volúmenes (>8MB)**
 ```python
@@ -286,7 +256,7 @@ Al finalizar, verás un resumen exacto del cruce de datos:
 ### 2. **FALTANTES**
 - **¿Qué detecta?** Registros que están en un archivo pero no en el otro
 - **Usa esta opción para:** Sincronizar dos bases de datos
-- **Salida:** Registros faltantes separados por archivo origen
+- **Salida:** Visualización detallada en terminal y búsqueda interactiva.
 
 ### 3. **INCOMPLETOS**
 - **¿Qué detecta?** Registros con campos vacíos o nulos
