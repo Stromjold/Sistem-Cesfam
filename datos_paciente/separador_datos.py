@@ -16,6 +16,7 @@ Versión optimizada para grandes volúmenes de datos (>8MB)
 """
 
 import os
+import sys
 import pandas as pd
 from typing import Optional, Tuple
 import openpyxl
@@ -26,9 +27,8 @@ from tkinter import filedialog
 import platform
 import subprocess
 import time
-import re
 
-warnings.filterwarnings('ignore')
+warnings.filterwarnings('ignore', category=DeprecationWarning)
 
 COMMON_KEY_NAMES = ['id_rut', 'rut', 'RUT', 'id', 'id_usuario', 'usuario_id', 'ID', 'documento', 'doc', 'cedula', 'ficha', 'folio', 'caso', 'n_solicitud', 'identificador']
 
@@ -50,9 +50,9 @@ def abrir_archivo_xlsx(ruta_archivo: str):
                 subprocess.call(['open', ruta_archivo])
             else:  # Linux
                 subprocess.call(['xdg-open', ruta_archivo])
-        print(f"\n✅ Abriendo archivo...")
-    except Exception as e:
-        print(f"\n❌ No se pudo abrir el archivo automáticamente: {e}")
+        print("\nAbriendo archivo...")
+    except OSError as e:
+        print(f"\nNo se pudo abrir el archivo automáticamente: {e}")
         print(f"   Por favor, ábrelo manualmente desde: {ruta_archivo}")
 
 
@@ -72,7 +72,7 @@ def check_system_memory():
     except (ImportError, ModuleNotFoundError):
         # psutil no está instalado - funcionalidad opcional deshabilitada
         return None
-    except Exception:
+    except (OSError, ValueError, RuntimeError):
         return None
 
 
@@ -85,15 +85,15 @@ def show_memory_warning(df_size_mb: float):
             available_gb = memory_info['available_gb']
             if available_gb < 2:
                 print(f"  ⚠️ ADVERTENCIA: Memoria disponible baja ({available_gb:.1f} GB)")
-                print(f"     Se recomienda cerrar otras aplicaciones.")
-    except Exception:
+                print("     Se recomienda cerrar otras aplicaciones.")
+    except (OSError, ValueError, RuntimeError):
         # Si hay cualquier error, simplemente no mostrar advertencia
         pass
 
 
 def clear_screen():
-    """Limpia la pantalla según el SO"""
-    os.system('cls' if os.name == 'nt' else 'clear')
+    """Limpia la pantalla según el SO - DESHABILITADO POR SOLICITUD"""
+    pass # os.system('cls' if os.name == 'nt' else 'clear')
 
 
 def print_header():
@@ -143,7 +143,7 @@ def list_files_in_directory(directory: str = '.', extensions: Optional[list] = N
             if os.path.isfile(os.path.join(directory, file)):
                 if extensions is None or any(file.lower().endswith(ext) for ext in extensions):
                     files.append(file)
-    except Exception as e:
+    except OSError as e:
         print(f"❌ Error listando archivos: {e}")
     return sorted(files)
 
@@ -155,7 +155,7 @@ def get_xlsx_sheets(path: str) -> list:
         sheets = wb.sheetnames
         wb.close()
         return sheets
-    except Exception as e:
+    except (OSError, ValueError, KeyError, IndexError, TypeError) as e: # Catching expected errors from file I/O or openpyxl
         print(f"❌ Error al leer hojas: {e}")
         return []
 
@@ -173,7 +173,7 @@ def load_all_sheets(path: str) -> dict:
         print(f"  📄 Procesando {len(sheets)} hoja(s) ({file_size_mb:.2f} MB)...")
         
         if file_size_mb > 8 and len(sheets) > 1:
-            print(f"  ⚡ Archivo grande con múltiples hojas - procesamiento optimizado")
+            print("  ⚡ Archivo grande con múltiples hojas - procesamiento optimizado")
         
         total_rows = 0
         for i, sheet_name in enumerate(sheets, 1):
@@ -188,7 +188,7 @@ def load_all_sheets(path: str) -> dict:
         
         print(f"  ✓ Total de filas cargadas: {total_rows:,}")
         return sheets_dict
-    except Exception as e:
+    except (OSError, ValueError, KeyError, IndexError, TypeError) as e:
         print(f"❌ Error cargando todas las hojas: {e}")
         return sheets_dict
 
@@ -208,8 +208,8 @@ def select_sheet_interactive(file_path: str) -> Optional[str]:
     print(f"\n  📄 Hojas disponibles en '{os.path.basename(file_path)}':")
     for idx, sheet in enumerate(sheets, 1):
         print(f"    {idx}. {sheet}")
-    print(f"    4. Usar la primera hoja")
-    print(f"    0. Analizar TODAS las hojas")
+    print("    4. Usar la primera hoja")
+    print("    0. Analizar TODAS las hojas")
     
     try:
         choice = input("  Seleccione opcion: ").strip()
@@ -228,7 +228,53 @@ def select_sheet_interactive(file_path: str) -> Optional[str]:
     return sheets[0]
 
 
-def interactive_menu() -> Tuple[str, str, Optional[str], Optional[str], Optional[str], list]:
+def interactive_menu_individual_selection() -> Tuple[str, str, Optional[str], Optional[str], Optional[str], Optional[list]]:
+    """Menú interactivo seleccionando archivos uno por uno"""
+    clear_screen()
+    print_header()
+    
+    print("📋 PASO 1: Seleccionar Archivos")
+    print("=" * 70)
+    
+    print("\n1️⃣ Abriendo ventana para seleccionar el PRIMER archivo (Examinado)...")
+    path_a = seleccionar_archivo_ventana("Selecciona el archivo EXAMINADO (Base)")
+    if not path_a:
+        return "", "", None, None, None, []
+    print(f"  ✓ Archivo A: {os.path.basename(path_a)}")
+    
+    print("\n2️⃣ Abriendo ventana para seleccionar el SEGUNDO archivo (Ejecución)...")
+    path_b = seleccionar_archivo_ventana("Selecciona el archivo EJECUCIÓN (Comparar)")
+    if not path_b:
+        return "", "", None, None, None, []
+    print(f"  ✓ Archivo B: {os.path.basename(path_b)}")
+
+    # Por defecto seleccionamos todos los análisis, luego se filtra al guardar
+    selected_analysis_types = None
+    
+    # Seleccionar hoja A
+    selected_sheet_a = None
+    if path_a.lower().endswith(('.xlsx', '.xls')):
+        selected_sheet_a = select_sheet_interactive(path_a)
+    
+    # Seleccionar hoja B
+    selected_sheet_b = None
+    if path_b.lower().endswith(('.xlsx', '.xls')):
+        selected_sheet_b = select_sheet_interactive(path_b)
+    
+    # Columna clave (detección automática)
+    clear_screen()
+    print_header()
+    print("📋 PASO 2: Configurar Columna Clave")
+    print("=" * 70)
+    
+    print("\n✓ Usando detección automática de columna clave (recomendado)")
+    
+    selected_key = None
+    
+    return path_a, path_b, selected_key, selected_sheet_a, selected_sheet_b, selected_analysis_types
+
+
+def interactive_menu() -> Tuple[str, str, Optional[str], Optional[str], Optional[str], Optional[list]]:
     """Menú interactivo para seleccionar archivos y parámetros con ventanas"""
     clear_screen()
     print_header()
@@ -243,22 +289,22 @@ def interactive_menu() -> Tuple[str, str, Optional[str], Optional[str], Optional
         print("❌ Debes seleccionar al menos 2 archivos.")
         return "", "", None, None, None, []
     
-    file_a, file_b = archivos[0], archivos[1]
-    print(f"  ✓ Archivo A: {os.path.basename(file_a)}")
-    print(f"  ✓ Archivo B: {os.path.basename(file_b)}")
+    path_a, path_b = archivos[0], archivos[1]
+    print(f"  ✓ Archivo A: {os.path.basename(path_a)}")
+    print(f"  ✓ Archivo B: {os.path.basename(path_b)}")
     
-    # NUEVO: Menú de tipo de análisis ANTES de seleccionar hojas
-    tipos_analisis = menu_tipo_analisis()
+    # Por defecto seleccionamos todos los análisis, luego se filtra al guardar
+    selected_analysis_types = None
     
     # Seleccionar hoja A
-    sheet_a = None
-    if file_a.lower().endswith(('.xlsx', '.xls')):
-        sheet_a = select_sheet_interactive(file_a)
+    selected_sheet_a = None
+    if path_a.lower().endswith(('.xlsx', '.xls')):
+        selected_sheet_a = select_sheet_interactive(path_a)
     
     # Seleccionar hoja B
-    sheet_b = None
-    if file_b.lower().endswith(('.xlsx', '.xls')):
-        sheet_b = select_sheet_interactive(file_b)
+    selected_sheet_b = None
+    if path_b.lower().endswith(('.xlsx', '.xls')):
+        selected_sheet_b = select_sheet_interactive(path_b)
     
     # Columna clave (detección automática)
     clear_screen()
@@ -268,9 +314,9 @@ def interactive_menu() -> Tuple[str, str, Optional[str], Optional[str], Optional
     
     print("\n✓ Usando detección automática de columna clave (recomendado)")
     
-    key = None
+    selected_key = None
     
-    return file_a, file_b, key, sheet_a, sheet_b, tipos_analisis
+    return path_a, path_b, selected_key, selected_sheet_a, selected_sheet_b, selected_analysis_types
 
 
 def detect_header_row_xlsx(path: str, sheet_name: Optional[str] = None) -> Tuple[int, list]:
@@ -337,7 +383,7 @@ def detect_header_row_xlsx(path: str, sheet_name: Optional[str] = None) -> Tuple
         
         # ESTRATEGIA SECUNDARIA: Detección por densidad
         # Si no encontramos palabras clave, buscamos la primera fila con más columnas
-        print(f"  ℹ No se detectaron palabras clave en encabezados. Buscando por densidad de datos...")
+        print("  ℹ No se detectaron palabras clave en encabezados. Buscando por densidad de datos...")
         max_cols = 0
         best_density_row = 0
         
@@ -364,8 +410,8 @@ def detect_header_row_xlsx(path: str, sheet_name: Optional[str] = None) -> Tuple
         print(f"⚠ No se detectó encabezado claro en '{sheet_name or 'hoja activa'}', usando fila 1")
         return 0, []
     
-    except Exception as e:
-        print(f"⚠ Error detectando encabezado: {e}")
+    except (OSError, ValueError, KeyError, IndexError, TypeError) as e:
+        print(f"❌ Error detectando encabezado: {e}")
         return 0, []
 
 
@@ -383,7 +429,7 @@ def load_table(path: str, sheet_name: Optional[str] = None, auto_detect: bool = 
     try:
         if ext in ['.xls', '.xlsx']:
             # Detectar encabezado automáticamente
-            header_idx, header_vals = detect_header_row_xlsx(path, sheet_name)
+            header_idx, _ = detect_header_row_xlsx(path, sheet_name)
 
             # Configurar parámetros de lectura
             read_params = {
@@ -421,7 +467,7 @@ def load_table(path: str, sheet_name: Optional[str] = None, auto_detect: bool = 
                         if unique_ratio < 0.4:
                             try:
                                 df[col] = df[col].astype('category')
-                            except Exception:
+                            except (ValueError, TypeError):
                                 pass
             elif len(df) > 10000:
                 # Optimización estándar para archivos medianos
@@ -430,7 +476,7 @@ def load_table(path: str, sheet_name: Optional[str] = None, auto_detect: bool = 
                     if unique_ratio < 0.5:
                         try:
                             df[col] = df[col].astype('category')
-                        except Exception:
+                        except (ValueError, TypeError):
                             pass
 
             return df
@@ -459,18 +505,18 @@ def load_table(path: str, sheet_name: Optional[str] = None, auto_detect: bool = 
 
         raise ValueError(f"❌ Formato no soportado: {ext}")
 
-    except Exception as e:
+    except (OSError, ValueError, KeyError, IndexError, TypeError) as e:
         print(f"❌ Error cargando {path}: {e}")
         return pd.DataFrame()
 
 
-def auto_detect_key_column(df: pd.DataFrame, key: Optional[str] = None) -> str:
+def auto_detect_key_column(df: pd.DataFrame, provided_key: Optional[str] = None) -> str:
     """
     Detecta automáticamente la columna clave.
     Prioridad: parámetro > nombres comunes > primera columna numérica > primera columna
     """
-    if key and key in df.columns:
-        return key
+    if provided_key and provided_key in df.columns:
+        return provided_key
     
     # Buscar nombres comunes
     for name in COMMON_KEY_NAMES:
@@ -622,7 +668,7 @@ def find_null_data_columns(df: pd.DataFrame, exclude_cols: Optional[list] = None
     return null_info
 
 
-def crear_reporte_datos_faltantes(df: pd.DataFrame, key_column: str, output_dir: str = '.'):
+def crear_reporte_datos_faltantes(df: pd.DataFrame, key_column: str, _output_dir: str = '.'):
     """
     Crea un reporte detallado de qué datos están nulos por usuario (identificado por RUT/key)
     Formatea automáticamente los RUTs al formato chileno
@@ -669,22 +715,105 @@ def print_progress(label: str, percent: float, width: int = 20):
     print(f"  {label}: [{bar}] {percent:5.1f}%", end='\r', flush=True)
 
 
-def save_outputs_single_file(reportes_dict: dict, output_dir: str = '.', tipos_analisis: Optional[list] = None):
+def save_outputs_single_file(reportes_dict: dict, output_dir: str = '.', selected_analysis_types: Optional[list] = None):
     """
     Guarda reportes en un archivo Excel según los tipos de análisis seleccionados
     
     Args:
         reportes_dict: Diccionario con los DataFrames de reportes
         output_dir: Directorio donde guardar el archivo
-        tipos_analisis: Lista con tipos ['duplicados', 'faltantes', 'incompletos'] o None para todos
+        selected_analysis_types: Lista con tipos ['duplicados', 'faltantes', 'incompletos'] o None para todos
     """
     
-    # Determinar nombre del archivo según tipo de análisis
-    if tipos_analisis and len(tipos_analisis) == 1:
-        tipo_nombre = tipos_analisis[0].upper()
+    
+    # -------------------------------------------------------------
+    # DIAGNÓSTICO E INTERACCIÓN PREVIA
+    # -------------------------------------------------------------
+    print("\n" + "="*60)
+    print("📋  DIAGNÓSTICO DE RESULTADOS ENCONTRADOS")
+    print("="*60)
+    
+    has_results = False
+    
+    # Obtener totales para cálculos de porcentaje
+    total_a = reportes_dict.get('_TOTAL_A', 0)
+    total_b = reportes_dict.get('_TOTAL_B', 0)
+    nombre_a = reportes_dict.get('_NOMBRE_A', '')
+    nombre_b = reportes_dict.get('_NOMBRE_B', '')
+
+    for key, val in reportes_dict.items():
+        if not key.startswith('_') and isinstance(val, pd.DataFrame):
+            # Omitir claves genéricas "en A" y "en B" si tienen nombres específicos
+            if (key.endswith(" en A") and nombre_a != "A") or \
+               (key.endswith(" en B") and nombre_b != "B"):
+                continue
+            
+            count = len(val)
+            icon = "✅" if count > 0 else "⚪"
+            
+            # Calcular porcentaje si aplica
+            pct_str = ""
+            if nombre_a and (f"en {nombre_a}" in key or "en A" in key):
+                if total_a > 0:
+                    pct = (count / total_a) * 100
+                    pct_str = f" ({pct:5.2f}% de {nombre_a})"
+            elif nombre_b and (f"en {nombre_b}" in key or "en B" in key):
+                if total_b > 0:
+                    pct = (count / total_b) * 100
+                    pct_str = f" ({pct:5.2f}% de {nombre_b})"
+            
+            print(f"  {icon} {key:<30}: {count:>6} registros{pct_str}")
+            if count > 0:
+                has_results = True
+            
+    print("-" * 60)
+    
+    if not has_results:
+        print("\n⚠  ATENCIÓN: No se encontraron diferencias ni datos para reportar.")
+
+    print("\n¿Qué datos deseas descargar?")
+    print("  1. Duplicados")
+    print("  2. Faltantes")
+    print("  3. Incompletos")
+    print("  4. Todos los anteriores")
+    print("  0. Volver al menú principal")
+    print("  x. Detener programa")
+    print("="*60)
+
+    while True:
+        seleccion = input("\nEscribe tu opción (1-4, 0, x): ").strip().lower()
+        
+        if seleccion == '0':
+            print("\n🔙 Volviendo al menú principal...")
+            return None
+        elif seleccion == 'x':
+            print("\n👋 Deteniendo programa...")
+            import sys
+            sys.exit()
+        elif seleccion == '1':
+            selected_analysis_types = ['duplicados']
+            break
+        elif seleccion == '2':
+            selected_analysis_types = ['faltantes']
+            break
+        elif seleccion == '3':
+            selected_analysis_types = ['incompletos']
+            break
+        elif seleccion == '4':
+            selected_analysis_types = ['duplicados', 'faltantes', 'incompletos']
+            break
+        else:
+            print("❌ Opción no válida. Intenta de nuevo.")
+
+    # Determinar nombre del archivo según la selección
+    if len(selected_analysis_types) == 1:
+        tipo_nombre = selected_analysis_types[0].upper()
         xlsx_path = os.path.join(output_dir, f'REPORTE_{tipo_nombre}.xlsx')
     else:
         xlsx_path = os.path.join(output_dir, 'REPORTE_COMPLETO_COMPARACION.xlsx')
+
+    print(f"\n  📂 Archivo destino: {os.path.basename(xlsx_path)}")
+    print("\n🚀 Iniciando generación de archivo Excel...")
     
     # Calcular tamaño estimado de datos
     total_rows = sum(len(df) for key, df in reportes_dict.items() 
@@ -749,7 +878,7 @@ def save_outputs_single_file(reportes_dict: dict, output_dir: str = '.', tipos_a
                 try:
                     ws.merge_cells(start_row=current_row, start_column=start_col, 
                         end_row=current_row, end_column=end_col)
-                except:
+                except (ValueError, TypeError, AttributeError):
                     pass
                 title_cell = ws.cell(row=current_row, column=start_col, value=titulo)
                 title_cell.font = Font(bold=True, size=14, color="FFFFFF")
@@ -792,7 +921,7 @@ def save_outputs_single_file(reportes_dict: dict, output_dir: str = '.', tipos_a
                     try:
                         if cell.value:
                             max_length = max(max_length, len(str(cell.value)))
-                    except:
+                    except (AttributeError, TypeError, ValueError):
                         pass
                 
                 adjusted_width = min(max_length + 2, 50)
@@ -804,24 +933,26 @@ def save_outputs_single_file(reportes_dict: dict, output_dir: str = '.', tipos_a
         # Crear hojas con tablas lado a lado
         print("  💾 Generando archivo Excel...")
         
-        # Determinar qué hojas crear según tipos_analisis
-        if tipos_analisis is None:
-            tipos_analisis = ['duplicados', 'faltantes', 'incompletos']
+        # Determinar qué hojas crear según selected_analysis_types
+        if selected_analysis_types is None:
+            tipos_a_procesar = ['duplicados', 'faltantes', 'incompletos']
+        else:
+            tipos_a_procesar = selected_analysis_types
         
         # Contar hojas a crear
         hojas_a_crear = []
-        if 'faltantes' in tipos_analisis:
+        if 'faltantes' in tipos_a_procesar:
             hojas_a_crear.extend(['faltantes', 'todos_faltantes'])
-        if 'duplicados' in tipos_analisis:
+        if 'duplicados' in tipos_a_procesar:
             hojas_a_crear.extend(['duplicados', 'todos_duplicados'])
-        if 'incompletos' in tipos_analisis:
+        if 'incompletos' in tipos_a_procesar:
             hojas_a_crear.extend(['incompletos', 'todos_incompletos'])
         
         total_hojas = len(hojas_a_crear) + 2  # +2 para usuarios faltantes
         hoja_actual = 0
         
         # DEBUG: Mostrar qué hay en reportes_dict
-        print(f"\n  🔍 Debug - Análisis seleccionados: {tipos_analisis}")
+        print(f"\n  🔍 Debug - Análisis seleccionados: {tipos_a_procesar}")
         print(f"  🔍 Debug - Claves en reportes_dict:")
         for key in reportes_dict.keys():
             if not key.startswith('_'):
@@ -830,34 +961,36 @@ def save_outputs_single_file(reportes_dict: dict, output_dir: str = '.', tipos_a
                 else:
                     print(f"      - {key}: {type(reportes_dict[key])}")
         
-        # 1. FALTANTES (solo si está en tipos_analisis)
-        if 'faltantes' in tipos_analisis:
+        # 1. FALTANTES (solo si está en tipos_a_procesar)
+        if 'faltantes' in tipos_a_procesar:
             print_progress("Guardando", (hoja_actual / total_hojas) * 100)
             
             # Primera hoja: TODOS los faltantes consolidados
             if 'TODOS - Faltantes' in reportes_dict and not reportes_dict['TODOS - Faltantes'].empty:
-                ws_faltantes = wb.create_sheet("TODOS - Faltantes")
-                write_and_format_dataframe(ws_faltantes, reportes_dict['TODOS - Faltantes'], 1, 1, "Todos los Registros Faltantes")
-                print(f"    ✓ Creada hoja: TODOS - Faltantes ({len(reportes_dict['TODOS - Faltantes'])} filas)")
+                ws_faltantes = wb.create_sheet("RESUMEN DIFERENCIAS")
+                write_and_format_dataframe(ws_faltantes, reportes_dict['TODOS - Faltantes'], 1, 1, "Todos los Registros con Diferencias")
+                print(f"    ✓ Creada hoja: RESUMEN DIFERENCIAS ({len(reportes_dict['TODOS - Faltantes'])} filas)")
             hoja_actual += 1
             print_progress("Guardando", (hoja_actual / total_hojas) * 100)
             
-            # Segunda hoja: Faltantes en B
+            # Segunda hoja: Faltantes en B (Lo que está en A pero no en B -> A - B)
             if 'Faltantes en B' in reportes_dict and not reportes_dict['Faltantes en B'].empty:
-                ws_falt_b = wb.create_sheet(f"Faltantes en {nombre_b}"[:31])
-                write_and_format_dataframe(ws_falt_b, reportes_dict['Faltantes en B'], 1, 1, f"Registros que EXISTEN en {nombre_a} pero FALTAN en {nombre_b}")
-                print(f"    ✓ Creada hoja: Faltantes en {nombre_b} ({len(reportes_dict['Faltantes en B'])} filas)")
+                nombre_hoja = f"RESTA (A - B)" 
+                ws_falt_b = wb.create_sheet(nombre_hoja)
+                write_and_format_dataframe(ws_falt_b, reportes_dict['Faltantes en B'], 1, 1, f"NO ENCONTRADOS: Están en {nombre_a} pero NO en {nombre_b}")
+                print(f"    ✓ Creada hoja: {nombre_hoja} ({len(reportes_dict['Faltantes en B'])} filas)")
             
-            # Tercera hoja: Faltantes en A
+            # Tercera hoja: Faltantes en A (Lo que está en B pero no en A -> B - A)
             if 'Faltantes en A' in reportes_dict and not reportes_dict['Faltantes en A'].empty:
-                ws_falt_a = wb.create_sheet(f"Faltantes en {nombre_a}"[:31])
-                write_and_format_dataframe(ws_falt_a, reportes_dict['Faltantes en A'], 1, 1, f"Registros que EXISTEN en {nombre_b} pero FALTAN en {nombre_a}")
-                print(f"    ✓ Creada hoja: Faltantes en {nombre_a} ({len(reportes_dict['Faltantes en A'])} filas)")
+                nombre_hoja = f"SOBRANTES (B - A)"
+                ws_falt_a = wb.create_sheet(nombre_hoja)
+                write_and_format_dataframe(ws_falt_a, reportes_dict['Faltantes en A'], 1, 1, f"EXTRAS: Están en {nombre_b} pero NO en {nombre_a}")
+                print(f"    ✓ Creada hoja: {nombre_hoja} ({len(reportes_dict['Faltantes en A'])} filas)")
             hoja_actual += 1
             print_progress("Guardando", (hoja_actual / total_hojas) * 100)
         
-        # 2. DUPLICADOS (solo si está en tipos_analisis)
-        if 'duplicados' in tipos_analisis:
+        # 2. DUPLICADOS (solo si está en tipos_a_procesar)
+        if 'duplicados' in tipos_a_procesar:
             print_progress("Guardando", (hoja_actual / total_hojas) * 100)
             
             # Primera hoja: TODOS los duplicados consolidados
@@ -882,8 +1015,8 @@ def save_outputs_single_file(reportes_dict: dict, output_dir: str = '.', tipos_a
             hoja_actual += 1
             print_progress("Guardando", (hoja_actual / total_hojas) * 100)
         
-        # 3. INCOMPLETOS (solo si está en tipos_analisis)
-        if 'incompletos' in tipos_analisis:
+        # 3. INCOMPLETOS (solo si está en tipos_a_procesar)
+        if 'incompletos' in tipos_a_procesar:
             print_progress("Guardando", (hoja_actual / total_hojas) * 100)
             
             # Primera hoja: TODOS los incompletos consolidados
@@ -958,7 +1091,7 @@ def save_outputs_single_file(reportes_dict: dict, output_dir: str = '.', tipos_a
             print(f"   🚨 INTENTO FINAL: Guardando como '{os.path.basename(xlsx_path)}'...")
             try:
                 wb.save(xlsx_path)
-            except Exception as final_e:
+            except OSError as final_e:
                 print(f"\n❌ ERROR FATAL: No se pudo guardar el reporte en ninguna ubicación.")
                 print(f"   Detalle: {final_e}")
                 wb.close()
@@ -1003,66 +1136,15 @@ def save_outputs_single_file(reportes_dict: dict, output_dir: str = '.', tipos_a
 
 def imprimir_tabla_bonita(df, titulo=None, max_col_width=50):
     """
-    Imprime un DataFrame con formato de tabla sin usar tabulate.
-    Dibuja bordes con caracteres ASCII y permite scroll lateral.
-    
-    Args:
-        df: DataFrame a imprimir
-        titulo: Título opcional
-        max_col_width: Ancho máximo por columna (default: 50)
+    Imprime un DataFrame de manera legible. 
+    [MODIFICADO] Se suprime la salida detallada en terminal para evitar saturación.
     """
     if titulo:
         print(f"\n🔹 {titulo}")
     
-    if df.empty:
-        print("   (La tabla está vacía)")
-        return
-
-    # Convertir todo a string
-    df_str = df.astype(str)
-    columns = df_str.columns.tolist()
-    
-    # Calcular anchos de columna con límite máximo
-    widths = []
-    for col in columns:
-        header_len = len(col)
-        content_len = df_str[col].map(len).max() if not df_str.empty else 0
-        # Limitar el ancho máximo de columna
-        width = min(max(header_len, content_len) + 2, max_col_width + 2)
-        widths.append(width)
-
-    # Crear líneas separadoras
-    def crear_linea(char_cruce='+', char_linea='-'):
-        return char_cruce + char_cruce.join([char_linea * w for w in widths]) + char_cruce
-
-    linea_sep = crear_linea()
-    linea_header = crear_linea('+', '=')
-
-    # Imprimir encabezado
-    print(linea_header)
-    header_parts = []
-    for col, w in zip(columns, widths):
-        # Truncar encabezado si es muy largo
-        if len(col) > w - 2:
-            col_display = col[:w-5] + '...'
-        else:
-            col_display = col
-        header_parts.append(f" {col_display:<{w-2}} ")
-    print("|" + "|".join(header_parts) + "|")
-    print(linea_header)
-
-    # Imprimir filas
-    for _, row in df_str.iterrows():
-        row_parts = []
-        for val, w in zip(row, widths):
-            # Truncar contenido si es muy largo
-            if len(val) > w - 2:
-                val_display = val[:w-5] + '...'
-            else:
-                val_display = val
-            row_parts.append(f" {val_display:<{w-2}} ")
-        print("|" + "|".join(row_parts) + "|")
-        print(linea_sep)
+    # No imprimir detalles en terminal
+    print("   ℹ Detalle completo disponible en el archivo Excel generado.")
+    print("-" * 60)
 
 def main(file_a: str, file_b: str, key: Optional[str] = None, sheet_a: Optional[str] = None, 
         sheet_b: Optional[str] = None, tipos_analisis: Optional[list] = None):
@@ -1180,8 +1262,8 @@ def main(file_a: str, file_b: str, key: Optional[str] = None, sheet_a: Optional[
     print(f"  {nombre_b} → '{key_b}': {stats_b['uniqueness_pct']:.1f}% único")
     
     print(f"\n  🔍 DEBUG - Verificación de datos:")
-    print(f"     Primeros 5 valores de {nombre_a}[{key_a}]: {df_a[key_a].head(5).tolist()}")
-    print(f"     Primeros 5 valores de {nombre_b}[{key_b}]: {df_b[key_b].head(5).tolist()}")
+    print(f"     Primeros 5 valores de {nombre_a}[{key_a}]: [OCULTO]")
+    print(f"     Primeros 5 valores de {nombre_b}[{key_b}]: [OCULTO]")
     print(f"     Hay valores nulos en {nombre_a}[{key_a}]? {df_a[key_a].isnull().sum()} nulos")
     print(f"     Hay valores nulos en {nombre_b}[{key_b}]? {df_b[key_b].isnull().sum()} nulos")
     
@@ -1190,12 +1272,9 @@ def main(file_a: str, file_b: str, key: Optional[str] = None, sheet_a: Optional[
     df_a['__KEY__'] = df_a[key_a].astype(str).str.upper().str.strip().str.replace(r'\.0$', '', regex=True)
     df_b['__KEY__'] = df_b[key_b].astype(str).str.upper().str.strip().str.replace(r'\.0$', '', regex=True)
     
-    print(f"     Primeros 5 valores normalizados de {nombre_a}: {df_a['__KEY__'].head(5).tolist()}")
-    print(f"     Primeros 5 valores normalizados de {nombre_b}: {df_b['__KEY__'].head(5).tolist()}")
-    
     # Análisis de diferencias (optimizado para grandes volúmenes)
     print(f"\n{'='*60}")
-    print(f"📊 ANÁLISIS COMPARATIVO")
+    print(f"📊 ANÁLISIS COMPARATIVO (RUT como clave principal)")
     print(f"{'='*60}")
     print(f"Total en {nombre_a}: {len(df_a):,}")
     print(f"Total en {nombre_b}: {len(df_b):,}")
@@ -1209,7 +1288,7 @@ def main(file_a: str, file_b: str, key: Optional[str] = None, sheet_a: Optional[
     faltantes_en_a = pd.DataFrame()
     if 'faltantes' in tipos_analisis:
         print("  ⏳ Generando índices de comparación...")
-        print("  ⏳ Identificando diferencias...")
+        print("  ⏳ Calculando restas (A - B) y (B - A)...")
         faltantes_en_b = df_a[~df_a['__KEY__'].isin(set_b)]
         faltantes_en_a = df_b[~df_b['__KEY__'].isin(set_a)]
         solo_en_a = len(faltantes_en_b)
@@ -1222,11 +1301,9 @@ def main(file_a: str, file_b: str, key: Optional[str] = None, sheet_a: Optional[
         pct_faltantes_b = (solo_en_a / total_a_count * 100) if total_a_count > 0 else 0
         pct_faltantes_a = (solo_en_b / total_b_count * 100) if total_b_count > 0 else 0
         
-        print(f"\n📊 ESTADÍSTICAS DE FALTANTES (PRECISION):")
-        print(f"   ❌ FALTAN EN {nombre_b}: {solo_en_a:,} usuarios")
-        print(f"      (Representa el {pct_faltantes_b:.2f}% de los datos originales de {nombre_a})")
-        print(f"   ❌ FALTAN EN {nombre_a}: {solo_en_b:,} usuarios")
-        print(f"      (Representa el {pct_faltantes_a:.2f}% de los datos originales de {nombre_b})")
+        print(f"\n📊 RESULTADO DE LA RESTA:")
+        print(f"   ❌ (A - B) Están en {nombre_a} pero NO en {nombre_b}: {solo_en_a:,} usuarios")
+        print(f"   ❌ (B - A) Están en {nombre_b} pero NO en {nombre_a}: {solo_en_b:,} usuarios")
         print(f"   ✅ REGISTROS COMUNES: {comunes:,}")
         print(f"      (Presentes en ambos archivos)")
     
@@ -1278,6 +1355,8 @@ def main(file_a: str, file_b: str, key: Optional[str] = None, sheet_a: Optional[
     # Guardar nombres para títulos dinámicos
     reportes_dict['_NOMBRE_A'] = nombre_a
     reportes_dict['_NOMBRE_B'] = nombre_b
+    reportes_dict['_TOTAL_A'] = len(df_a)
+    reportes_dict['_TOTAL_B'] = len(df_b)
     
     # Listas para consolidar por categoría
     lista_faltantes = []
@@ -1296,16 +1375,10 @@ def main(file_a: str, file_b: str, key: Optional[str] = None, sheet_a: Optional[
             )
             
             if not df_todos_faltantes.empty:
-                df_show = df_todos_faltantes.head(10)
-                df_show = format_dataframe_rut(df_show, key_a)
-                imprimir_tabla_bonita(df_show, f"📊 TODOS - Registros Faltantes ({len(df_todos_faltantes):,} registros):")
                 reportes_dict['TODOS - Faltantes'] = df_todos_faltantes.copy()
         
         # Segundo: Faltantes en B
         if not faltantes_en_b.empty:
-            df_show = faltantes_en_b.drop(columns=['__KEY__']).head(10)
-            df_show = format_dataframe_rut(df_show, key_a)
-            imprimir_tabla_bonita(df_show, f"1️⃣ Registros faltantes en {nombre_b} ({len(faltantes_en_b):,}):")
             reportes_dict[f'Faltantes en {nombre_b}'] = faltantes_en_b.drop(columns=['__KEY__'])
             reportes_dict['Faltantes en B'] = faltantes_en_b.drop(columns=['__KEY__'])
         else:
@@ -1313,9 +1386,6 @@ def main(file_a: str, file_b: str, key: Optional[str] = None, sheet_a: Optional[
         
         # Tercero: Faltantes en A
         if not faltantes_en_a.empty:
-            df_show = faltantes_en_a.drop(columns=['__KEY__']).head(10)
-            df_show = format_dataframe_rut(df_show, key_b)
-            imprimir_tabla_bonita(df_show, f"2️⃣ Registros faltantes en {nombre_a} ({len(faltantes_en_a):,}):")
             reportes_dict[f'Faltantes en {nombre_a}'] = faltantes_en_a.drop(columns=['__KEY__'])
             reportes_dict['Faltantes en A'] = faltantes_en_a.drop(columns=['__KEY__'])
         else:
@@ -1347,11 +1417,6 @@ def main(file_a: str, file_b: str, key: Optional[str] = None, sheet_a: Optional[
                 if len(ruts_todos_dup) > 10:
                     print(f"   ... y {len(ruts_todos_dup) - 10} RUTs más")
                 
-                print(f"\n   📋 Primeros 10 registros duplicados (ordenados por RUT):")
-                df_show = df_todos_duplicados.head(10)
-                df_show = format_dataframe_rut(df_show, col_rut_todos)
-                imprimir_tabla_bonita(df_show, None)
-                
                 reportes_dict['TODOS - Duplicados'] = df_todos_duplicados.copy()
         
         # Segundo: Duplicados en A
@@ -1365,11 +1430,6 @@ def main(file_a: str, file_b: str, key: Optional[str] = None, sheet_a: Optional[
                 print(f"   • {format_rut(str(rut))}: {count} registros")
             if len(ruts_dup_a) > 10:
                 print(f"   ... y {len(ruts_dup_a) - 10} RUTs más")
-            
-            print(f"\n   📋 Primeros 10 registros duplicados:")
-            df_show = duplicados_a.drop(columns=['__KEY__']).head(10)
-            df_show = format_dataframe_rut(df_show, key_a)
-            imprimir_tabla_bonita(df_show, None)
             
             # Guardar datos completos sin transformación
             reportes_dict[f'Duplicados en {nombre_a}'] = duplicados_a.drop(columns=['__KEY__'])
@@ -1505,32 +1565,6 @@ def main(file_a: str, file_b: str, key: Optional[str] = None, sheet_a: Optional[
     input("\nPresione Enter para volver al menú principal...")
 
 
-def menu_tipo_analisis() -> list:
-    """Menú para seleccionar qué tipo de análisis realizar"""
-    clear_screen()
-    print_header()
-    print("❓ ¿QUÉ QUIERES HACER?")
-    print("=" * 70)
-    print("  1. Duplicados")
-    print("  2. Faltantes")
-    print("  3. Incompletos")
-    print("  4. Todos los anteriores")
-    print("=" * 70)
-    
-    while True:
-        opcion = input("\nEscribe tu opción (1, 2, 3 o 4): ").strip()
-        
-        if opcion == "1":
-            return ['duplicados']
-        elif opcion == "2":
-            return ['faltantes']
-        elif opcion == "3":
-            return ['incompletos']
-        elif opcion == "4":
-            return ['duplicados', 'faltantes', 'incompletos']
-        else:
-            print("❌ Opción no válida. Por favor selecciona 1, 2, 3 o 4.")
-
 
 def menu_seleccion_archivos() -> list:
     """Selecciona múltiples archivos con opción de agregar más"""
@@ -1640,17 +1674,23 @@ if __name__ == '__main__':
     while True:
         clear_screen()
         print_header()
-        print("🔍 COMPARADOR DE ARCHIVOS - MENÚ PRINCIPAL")
+        print("COMPARADOR DE ARCHIVOS - MENÚ PRINCIPAL")
         print("=" * 70)
-        print("  1. Comparación interactiva (2 archivos)")
-        print("  2. Comparación múltiple (3+ archivos)")
-        print("  3. Salir")
+        print("  1. Seleccion archivo (se selecionara que archivo sera el examinado y en cual archivo sera el de ejecucion)")
+        print("  2. Seleccion archivo interactiva (2 archivos)")
+        print("  3. Seleccion archivo múltiple (3+ archivos)")
+        print("  x. Detener programa")
         
-        opcion_menu = input("\nEscribe tu opción (1, 2 o 3): ").strip()
+        opcion_menu = input("\nEscribe tu opción (1, 2, 3, x): ").strip().lower()
+        if opcion_menu == 'x':
+            print("\n👋 Saliendo del programa...")
+            sys.exit()
         
-        if opcion_menu == "1":
-            # Menú interactivo con ventanas
-            result = interactive_menu()
+        if opcion_menu == "1" or opcion_menu == "2":
+            if opcion_menu == "1":
+                result = interactive_menu_individual_selection()
+            else:
+                result = interactive_menu()
             
             if result[0] == "":
                 continue
@@ -1697,13 +1737,13 @@ if __name__ == '__main__':
                     else:
                         print("Por favor responde Y (Sí) o N (No)")
         
-        elif opcion_menu == "2":
+        elif opcion_menu == "3":
             # Selección múltiple con ventanas
             lista = menu_seleccion_archivos()
             
             if lista and len(lista) >= 2:
-                # Agregar menú de selección de tipo de análisis
-                tipos_analisis = menu_tipo_analisis()
+                # Por defecto seleccionamos todos, el filtrado se hace al final
+                tipos_analisis = None
                 
                 clear_screen()
                 print_header()
@@ -1748,7 +1788,7 @@ if __name__ == '__main__':
                 print("❌ Operación cancelada.")
                 input("\nPresione Enter para volver al menú principal...")
         
-        elif opcion_menu == "3":
+        elif opcion_menu == "4":
             clear_screen()
             print_header()
             print("👋 ¡Hasta luego!")
@@ -1758,6 +1798,6 @@ if __name__ == '__main__':
         else:
             print(f"\n{'='*70}")
             print(f"❌ Opción no válida: '{opcion_menu}'")
-            print("Por favor, selecciona 1, 2 o 3")
+            print("Por favor, selecciona 1, 2, 3 o 4")
             print(f"{'='*70}")
             input("\n📌 Presione Enter para continuar...")

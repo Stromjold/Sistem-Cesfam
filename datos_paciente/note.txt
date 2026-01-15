@@ -1,4 +1,26 @@
- ✓ Creada hoja: TODOS - Faltantes (32616 filas) - los dos archivos juntos 
-    ✓ Creada hoja: Faltantes en Rayen (16076 filas) - nesesito que solo se van los que faltan en esta este archivo y estan en el otro archivo
-    ✓ Creada hoja: Faltantes en Percapita (16540 filas) - nesesito que solo se van los que faltan en esta este archivo y estan en el otro archivo
-  
+======================================================================
+               🔍 COMPARADOR DE ARCHIVOS XLSX/CSV
+======================================================================
+
+🔍 COMPARADOR DE ARCHIVOS - MENÚ PRINCIPAL
+======================================================================
+  1. Seleccion archivo (se selecionara que archivo sera el examinado y en cual archivo sera el de ejecucion)
+  2. Seleccion archivo interactiva (2 archivos)
+  3. Seleccion archivo múltiple (3+ archivos)
+  4. Salir
+
+Escribe tu opción (1, 2, 3 o 4): 
+
+======================================================================
+               🔍 COMPARADOR DE ARCHIVOS XLSX/CSV
+======================================================================
+
+❓ ¿QUÉ QUIERES HACER?
+======================================================================
+  1. Duplicados
+  2. Faltantes
+  3. Incompletos
+  4. Todos los anteriores
+======================================================================
+
+Escribe tu opción (1, 2, 3 o 4): 
