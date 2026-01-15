@@ -24,3 +24,12 @@ Escribe tu opción (1, 2, 3 o 4):
 ======================================================================
 
 Escribe tu opción (1, 2, 3 o 4): 
+
+
+Hay que hacer un cambio drastico en faltantes, que si el primer archivo tiene mas del 85% de datos que no estan en el seguendo archivo 
+se pondra un a observacion en el disganostico que diga el documento tiene una alta variedad de faltantes por lo tanto los datos serian 
+muchos, en fin la idea es que de una advertencia si el nivel de faltantes entre los dos dispositivos es mas del 85%
+
+ESTO TAMBIEN VA PARA LOS OTROS DOS 
+
+que esto se ve reflejado en una pequeña tabla como prioritario
