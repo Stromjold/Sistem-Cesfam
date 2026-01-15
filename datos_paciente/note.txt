@@ -1,0 +1,4 @@
+ ✓ Creada hoja: TODOS - Faltantes (32616 filas) - los dos archivos juntos 
+    ✓ Creada hoja: Faltantes en Rayen (16076 filas) - nesesito que solo se van los que faltan en esta este archivo y estan en el otro archivo
+    ✓ Creada hoja: Faltantes en Percapita (16540 filas) - nesesito que solo se van los que faltan en esta este archivo y estan en el otro archivo
+  
