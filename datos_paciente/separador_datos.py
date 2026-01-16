@@ -15,28 +15,57 @@ Características:
 Versión optimizada para grandes volúmenes de datos (>8MB)
 """
 
+# Imports de la biblioteca estándar
 import os
-import sys
-import pandas as pd
-from typing import Optional, Tuple
-import openpyxl
-from openpyxl.utils import get_column_letter
-import warnings
-import tkinter as tk
-from tkinter import filedialog
 import platform
 import subprocess
+import sys
 import time
+import tkinter as tk
+from tkinter import filedialog
+from typing import Optional, Tuple
+import warnings
+
+# Imports de terceros
+import openpyxl
+from openpyxl.utils import get_column_letter
+import pandas as pd
 
 warnings.filterwarnings('ignore', category=DeprecationWarning)
 
-COMMON_KEY_NAMES = ['id_rut', 'rut', 'RUT', 'id', 'id_usuario', 'usuario_id', 'ID', 'documento', 'doc', 'cedula', 'ficha', 'folio', 'caso', 'n_solicitud', 'identificador']
+COMMON_KEY_NAMES = ['id_rut',
+                    'rut',
+                    'RUT',
+                    'id',
+                    'id_usuario',
+                    'usuario_id',
+                    'ID', 
+                    'documento', 
+                    'doc', 
+                    'cedula', 
+                    'ficha', 
+                    'folio', 
+                    'caso', 
+                    'n_solicitud', 
+                    'identificador']
 
 # Constantes para detección de nombres
-NAME_COL_VARIANTS = ['nombres', 'nombre', 'nombres paciente', 'nombre paciente', 'previsión nombres', 'nombres_beneficiario']
-PATERNO_COL_VARIANTS = ['apellido paterno', 'paterno', 'apellidopaterno', 'primer apellido', 'apellido 1', 'apellido_paterno']
-MATERNO_COL_VARIANTS = ['apellido materno', 'materno', 'apellidomaterno', 'segundo apellido', 'apellido 2', 'apellido_materno']
-FULLNAME_COL_VARIANTS = ['nombre completo', 'nombre y apellido', 'apellidos y nombres', 'nombre_completo', 'paciente', 'nombre beneficiario']
+NAME_COL_VARIANTS = [
+    'nombres', 'nombre', 'nombres paciente', 'nombre paciente',
+    'previsión nombres', 'nombres_beneficiario'
+]
+PATERNO_COL_VARIANTS = [
+    'apellido paterno', 'paterno', 'apellidopaterno',
+    'primer apellido', 'apellido 1', 'apellido_paterno'
+]
+MATERNO_COL_VARIANTS = [
+    'apellido materno', 'materno', 'apellidomaterno',
+    'segundo apellido', 'apellido 2', 'apellido_materno'
+]
+FULLNAME_COL_VARIANTS = [
+    'nombre completo', 'nombre y apellido', 'apellidos y nombres',
+    'nombre_completo', 'paciente', 'nombre beneficiario'
+]
 
 def get_col_by_variants(df: pd.DataFrame, variants: list) -> Optional[str]:
     """Busca una columna en el DataFrame que coincida con alguna de las variantes."""
@@ -47,9 +76,64 @@ def get_col_by_variants(df: pd.DataFrame, variants: list) -> Optional[str]:
             return df.columns[idx]
         # Búsqueda parcial segura
         for col_idx, col_name in enumerate(df_cols_lower):
-            if variant == col_name or (len(variant) > 4 and variant in col_name):
+            is_exact_match = variant == col_name
+            is_partial_match = len(variant) > 4 and variant in col_name
+            if is_exact_match or is_partial_match:
                 return df.columns[col_idx]
     return None
+
+
+def get_essential_columns(df: pd.DataFrame) -> list:
+    """
+    Identifica y retorna solo las columnas esenciales del DataFrame:
+    RUT, Nombre, Apellido Paterno, Apellido Materno, y columnas de estado
+    """
+    essential_cols = []
+    
+    # Buscar columna de RUT
+    rut_col = get_col_by_variants(df, COMMON_KEY_NAMES)
+    if rut_col and rut_col in df.columns:
+        essential_cols.append(rut_col)
+    
+    # Buscar columna de Nombre
+    nombre_col = get_col_by_variants(df, NAME_COL_VARIANTS)
+    if nombre_col and nombre_col in df.columns:
+        essential_cols.append(nombre_col)
+    
+    # Buscar columna de Apellido Paterno
+    paterno_col = get_col_by_variants(df, PATERNO_COL_VARIANTS)
+    if paterno_col and paterno_col in df.columns:
+        essential_cols.append(paterno_col)
+    
+    # Buscar columna de Apellido Materno
+    materno_col = get_col_by_variants(df, MATERNO_COL_VARIANTS)
+    if materno_col and materno_col in df.columns:
+        essential_cols.append(materno_col)
+    
+    # Agregar columnas de estado si existen
+    for col in df.columns:
+        if col.startswith('ESTADO_EN_') or col == '__HOJA_ORIGEN__':
+            essential_cols.append(col)
+    
+    return essential_cols
+
+
+def clean_string_for_key(series: pd.Series) -> pd.Series:
+    """
+    Limpia strings para uso en claves: elimina espacios múltiples, whitespace, convierte a mayúsculas.
+    """
+    # Primero eliminar .0 final de floats convertidos a string
+    s = series.astype(str).str.replace(r'\.0$', '', regex=True)
+    
+    return (s
+            .str.replace(r'\s+', ' ', regex=True)  # Elimina espacios múltiples
+            .str.strip()  # Elimina espacios al inicio y final
+            .str.upper()  # Convierte a mayúsculas
+            .replace('NAN', '')  # Reemplaza NaN strings
+            .replace('NONE', '')  # Reemplaza None strings
+            .str.replace('.', '', regex=False)  # Elimina puntos (separadores de miles)
+            .replace('-', ''))  # Elimina guiones
+
 
 def generate_custom_key(df: pd.DataFrame, df_name: str, fields: list) -> Tuple[Optional[pd.Series], str, list]:
     """
@@ -59,9 +143,10 @@ def generate_custom_key(df: pd.DataFrame, df_name: str, fields: list) -> Tuple[O
     cols_found = []
     col_names = []
     key_parts = []
-    
-    print(f"  ⏳ {df_name}: Construyendo clave personalizada con: {', '.join(fields)}...")
-    
+
+    fields_str = ', '.join(fields)
+    print(f"  ⏳ {df_name}: Construyendo clave personalizada con: {fields_str}...")
+
     # Mapeo de campos a variantes
     field_variants = {
         'rut': COMMON_KEY_NAMES,
@@ -69,18 +154,15 @@ def generate_custom_key(df: pd.DataFrame, df_name: str, fields: list) -> Tuple[O
         'paterno': PATERNO_COL_VARIANTS,
         'materno': MATERNO_COL_VARIANTS
     }
-    
+
     for field in fields:
         if field in field_variants:
             variants = field_variants[field]
             col = get_col_by_variants(df, variants)
-            
+
             if col:
                 cols_found.append(col)
-                key_part = df[col].astype(str).str.strip().str.upper()
-                if field == 'rut':
-                    # Limpieza extra para RUT
-                    key_part = key_part.str.replace(r'\.0$', '', regex=True)
+                key_part = clean_string_for_key(df[col])
                 key_parts.append(key_part)
                 # Nombre para descripción
                 if field == 'paterno': col_names.append("Paterno")
@@ -89,10 +171,10 @@ def generate_custom_key(df: pd.DataFrame, df_name: str, fields: list) -> Tuple[O
                 elif field == 'rut': col_names.append("RUT")
             else:
                 print(f"    ⚠️ No se encontró columna para campo '{field}' en {df_name}")
-    
+
     if not cols_found:
         return None, "", []
-    
+
     # Combinar partes
     if len(key_parts) == 1:
         key_series = key_parts[0]
@@ -101,7 +183,7 @@ def generate_custom_key(df: pd.DataFrame, df_name: str, fields: list) -> Tuple[O
         key_series = key_parts[0]
         for part in key_parts[1:]:
             key_series = key_series + "|" + part
-            
+
     desc = " + ".join(col_names)
     print(f"    ✓ {df_name}: Usando {desc}")
     return key_series, desc, cols_found
@@ -114,30 +196,91 @@ def generate_person_key(df: pd.DataFrame, df_name: str) -> Tuple[Optional[pd.Ser
     col_nombre = get_col_by_variants(df, NAME_COL_VARIANTS)
     col_paterno = get_col_by_variants(df, PATERNO_COL_VARIANTS)
     col_materno = get_col_by_variants(df, MATERNO_COL_VARIANTS)
-    
+
     # Caso 1: Tenemos las 3 columnas separadas (Ideal)
     if col_nombre and col_paterno and col_materno:
         print(f"  ✓ {df_name}: Detectadas columnas separadas: {col_nombre}, {col_paterno}, {col_materno}")
-        key_series = (df[col_nombre].astype(str).str.strip().str.upper() + "|" + 
-                    df[col_paterno].astype(str).str.strip().str.upper() + "|" + 
-                    df[col_materno].astype(str).str.strip().str.upper())
+        key_series = (clean_string_for_key(df[col_nombre]) + "|" +
+                    clean_string_for_key(df[col_paterno]) + "|" +
+                    clean_string_for_key(df[col_materno]))
         return key_series, "Nombre + Paterno + Materno", [col_nombre, col_paterno, col_materno]
 
     # Caso 2: Nombre y Paterno (Sin Materno)
     if col_nombre and col_paterno:
         print(f"  ⚠ {df_name}: Falta apellido materno. Usando: {col_nombre}, {col_paterno}")
-        key_series = (df[col_nombre].astype(str).str.strip().str.upper() + "|" + 
-                    df[col_paterno].astype(str).str.strip().str.upper())
+        key_series = (clean_string_for_key(df[col_nombre]) + "|" +
+                    clean_string_for_key(df[col_paterno]))
         return key_series, "Nombre + Paterno", [col_nombre, col_paterno]
 
     # Caso 3: Nombre Completo en una sola columna
     col_full = get_col_by_variants(df, FULLNAME_COL_VARIANTS)
     if col_full:
         print(f"  ✓ {df_name}: Usando columna de nombre completo: '{col_full}'")
-        key_series = df[col_full].astype(str).str.strip().str.upper()
+        key_series = clean_string_for_key(df[col_full])
         return key_series, "Nombre Completo", [col_full]
-        
+
     return None, "", []
+
+
+def extract_duplicate_differences(df_duplicados: pd.DataFrame, key_col: str = '__KEY__') -> pd.DataFrame:
+    """
+    Extrae solo las diferencias entre registros duplicados.
+    Para cada grupo de duplicados, solo muestra las columnas donde hay diferencias.
+    Descompone la clave combinada en NOMBRE, APELLIDO_PATERNO, APELLIDO_MATERNO.
+
+    Args:
+        df_duplicados: DataFrame con registros duplicados
+        key_col: Nombre de la columna clave
+
+    Returns:
+        DataFrame con columnas: NOMBRE, APELLIDO_PATERNO, APELLIDO_MATERNO, columnas con diferencias
+    """
+    if df_duplicados.empty:
+        return pd.DataFrame()
+
+    diferencias_list = []
+
+    # Agrupar por la clave para procesar cada grupo de duplicados
+    grupos = df_duplicados.groupby(key_col)
+
+    for clave, grupo in grupos:
+        if len(grupo) > 1:  # Solo procesar si hay más de un registro
+            # Identificar columnas con diferencias
+            cols_con_diferencias = []
+            for col in grupo.columns:
+                if col != key_col and col != '__HOJA_ORIGEN__':
+                    # Verificar si hay valores diferentes en esta columna
+                    valores_unicos = grupo[col].nunique()
+                    if valores_unicos > 1:
+                        cols_con_diferencias.append(col)
+
+            # Si hay diferencias, agregar al resultado
+            if cols_con_diferencias:
+                for idx, row in grupo.iterrows():
+                    diff_dict = {}
+
+                    # Descomponer la clave combinada (NOMBRE|PATERNO|MATERNO)
+                    if '|' in str(clave):
+                        partes = str(clave).split('|')
+                        if len(partes) >= 1:
+                            diff_dict['NOMBRE'] = partes[0].strip() if partes[0] else ''
+                        if len(partes) >= 2:
+                            diff_dict['APELLIDO_PATERNO'] = partes[1].strip() if partes[1] else ''
+                        if len(partes) >= 3:
+                            diff_dict['APELLIDO_MATERNO'] = partes[2].strip() if partes[2] else ''
+                    else:
+                        # Si no está combinada, asumir que es solo nombre
+                        diff_dict['NOMBRE'] = str(clave).strip()
+
+                    diff_dict['_INDICE_'] = idx  # Para identificar cada registro
+                    for col in cols_con_diferencias:
+                        diff_dict[col] = row[col]
+                    diferencias_list.append(diff_dict)
+
+    if diferencias_list:
+        return pd.DataFrame(diferencias_list)
+    else:
+        return pd.DataFrame()
 
 
 def get_memory_usage(df: pd.DataFrame) -> str:
@@ -187,7 +330,7 @@ def show_memory_warning(df_size_mb: float):
     """Muestra advertencia si el archivo es muy grande (requiere psutil - opcional)"""
     try:
         memory_info = check_system_memory()
-        
+
         if memory_info and df_size_mb > 500:
             available_gb = memory_info['available_gb']
             if available_gb < 2:
@@ -215,12 +358,12 @@ def seleccionar_archivo_ventana(titulo_ventana: str) -> str:
     root = tk.Tk()
     root.withdraw()  # Oculta la ventana principal pequeña de Tkinter
     root.attributes('-topmost', True)  # Fuerza que la ventana aparezca encima de todo
-    
+
     ruta_archivo = filedialog.askopenfilename(
         title=titulo_ventana,
         filetypes=[("Archivos Excel y CSV", "*.xlsx *.xls *.csv"), ("Todos los archivos", "*.*")]
     )
-    
+
     root.destroy()  # Cierra la instancia de tkinter
     return ruta_archivo
 
@@ -245,7 +388,7 @@ def list_files_in_directory(directory: str = '.', extensions: Optional[list] = N
         # Verificar si el directorio existe
         if not os.path.isdir(directory):
             raise ValueError(f"❌ El directorio '{directory}' no existe.")
-        
+
         for file in os.listdir(directory):
             if os.path.isfile(os.path.join(directory, file)):
                 if extensions is None or any(file.lower().endswith(ext) for ext in extensions):
@@ -274,14 +417,14 @@ def load_all_sheets(path: str) -> dict:
         sheets = get_xlsx_sheets(path)
         if not sheets:
             return sheets_dict
-        
+
         file_size_mb = os.path.getsize(path) / (1024 * 1024)
-        
+
         print(f"  📄 Procesando {len(sheets)} hoja(s) ({file_size_mb:.2f} MB)...")
-        
+
         if file_size_mb > 8 and len(sheets) > 1:
             print("  ⚡ Archivo grande con múltiples hojas - procesamiento optimizado")
-        
+
         total_rows = 0
         for i, sheet_name in enumerate(sheets, 1):
             print(f"    [{i}/{len(sheets)}] Cargando '{sheet_name}'...", end=' ')
@@ -292,7 +435,7 @@ def load_all_sheets(path: str) -> dict:
                 print(f"✓ ({len(df):,} filas)")
             else:
                 print("⚠ (vacía)")
-        
+
         print(f"  ✓ Total de filas cargadas: {total_rows:,}")
         return sheets_dict
     except (OSError, ValueError, KeyError, IndexError, TypeError) as e:
@@ -304,26 +447,26 @@ def load_all_sheets(path: str) -> dict:
 def select_sheet_interactive(file_path: str) -> Optional[str]:
     """Permite seleccionar una hoja del archivo XLSX o procesar todas"""
     sheets = get_xlsx_sheets(file_path)
-    
+
     if not sheets:
         return None
-    
+
     if len(sheets) == 1:
         print(f"  📄 Hoja detectada: '{sheets[0]}'")
         return sheets[0]
-    
+
     print(f"\n  📄 Hojas disponibles en '{os.path.basename(file_path)}':")
     for idx, sheet in enumerate(sheets, 1):
         print(f"    {idx}. {sheet}")
     print("    4. Usar la primera hoja")
     print("    0. Analizar TODAS las hojas")
-    
+
     try:
         choice = input("  Seleccione opcion: ").strip()
-        
+
         if choice.upper() == '0':
             return 'ALL_SHEETS'  # Marcador especial para procesar todas las hojas
-        
+
         choice_num = int(choice)
         if choice_num == 0 or choice_num == 1:
             return sheets[0]
@@ -331,56 +474,23 @@ def select_sheet_interactive(file_path: str) -> Optional[str]:
             return sheets[choice_num - 1]
     except ValueError:
         pass
-    
+
     return sheets[0]
 
 
 def ask_identification_mode():
-    """Pregunta al usuario el modo de identificación (Normal vs Personalizado)"""
+    """Configura el modo de identificación para usar RUT, Nombre y Apellidos."""
     print("\n🔍 CONFIGURACIÓN DE CRITERIOS DE BÚSQUEDA")
     print("=" * 70)
-    print("¿Deseas usar la Búsqueda Normal (Automática) o Personalizada?")
-    print("  (Y/ENTER) Normal: Prioriza Nombre+Apellidos, si falla usa RUT/ID")
-    print("  (N)       Personalizada: Tú eliges qué campos usar (RUT, Nombre, Paterno, Materno)")
+    fields = ['rut', 'nombre', 'paterno', 'materno']
+    print(f"  ✓ Modo de identificación fijado a: {', '.join(fields).upper()}")
     
-    mode = input("\n  Opción (Y/N): ").strip().lower()
+    config = {
+        'mode': 'manual',
+        'fields': fields
+    }
     
-    config = {'mode': 'auto', 'fields': []}
-    
-    if mode == 'n' or mode == 'no':
-        config['mode'] = 'manual'
-        print("\n  Selecciona los campos para la identificación (separados por coma):")
-        print("  1. RUT / Identificador")
-        print("  2. Nombre(s)")
-        print("  3. Apellido Paterno")
-        print("  4. Apellido Materno")
-        print("  5. Todos los anteriores")
-        
-        selection = input("\n  Opción (ej: 2,3,4): ").strip()
-        
-        fields = []
-        if '5' in selection or 'todos' in selection.lower():
-            fields = ['rut', 'nombre', 'paterno', 'materno']
-        else:
-            if '1' in selection: fields.append('rut')
-            if '2' in selection: fields.append('nombre')
-            if '3' in selection: fields.append('paterno')
-            if '4' in selection: fields.append('materno')
-            
-        if not fields:
-            print("  ⚠️ No se seleccionaron campos válidos. Usando modo automático.")
-            config['mode'] = 'auto'
-            # Si no selecciona nada en manual, forzamos auto pero con campos vacios
-            config['fields'] = []
-        else:
-            print(f"  ✓ Configuración personalizada: {', '.join(fields).upper()}")
-            config['fields'] = fields
-        
-        input("\nPresione Enter para continuar...")
-    else:
-        print("  ✓ Modo Automático activado")
-        config['mode'] = 'auto'
-
+    input("\nPresione Enter para continuar...")
     return config
 
 
@@ -388,22 +498,24 @@ def interactive_menu_individual_selection() -> Tuple[str, str, Optional[str], Op
     """Menú interactivo seleccionando archivos uno por uno"""
     clear_screen()
     print_header()
-    
+
     # CONFIGURACIÓN PREVIA (Solicitud)
     config_ident = ask_identification_mode()
-    
+    if config_ident is None:
+        return "", "", None, None, None, [], {}
+
     clear_screen()
     print_header()
-    
+
     print("📋 PASO 1: Seleccionar Archivos")
     print("=" * 70)
-    
+
     print("\n1️⃣ Abriendo ventana para seleccionar el PRIMER archivo (Examinado)...")
     path_a = seleccionar_archivo_ventana("Selecciona el archivo EXAMINADO (Base)")
     if not path_a:
         return "", "", None, None, None, [], {}
     print(f"  ✓ Archivo A: {os.path.basename(path_a)}")
-    
+
     print("\n2️⃣ Abriendo ventana para seleccionar el SEGUNDO archivo (Ejecución)...")
     path_b = seleccionar_archivo_ventana("Selecciona el archivo EJECUCIÓN (Comparar)")
     if not path_b:
@@ -412,27 +524,27 @@ def interactive_menu_individual_selection() -> Tuple[str, str, Optional[str], Op
 
     # Por defecto seleccionamos todos los análisis, luego se filtra al guardar
     selected_analysis_types = None
-    
+
     # Seleccionar hoja A
     selected_sheet_a = None
     if path_a.lower().endswith(('.xlsx', '.xls')):
         selected_sheet_a = select_sheet_interactive(path_a)
-    
+
     # Seleccionar hoja B
     selected_sheet_b = None
     if path_b.lower().endswith(('.xlsx', '.xls')):
         selected_sheet_b = select_sheet_interactive(path_b)
-    
+
     # Columna clave (detección automática)
     clear_screen()
     print_header()
     print("📋 PASO 2: Configurar Columna Clave")
     print("=" * 70)
-    
+
     print("\n✓ Configuración lista.")
-    
+
     selected_key = None
-    
+
     return path_a, path_b, selected_key, selected_sheet_a, selected_sheet_b, selected_analysis_types, config_ident
 
 
@@ -440,50 +552,52 @@ def interactive_menu() -> Tuple[str, str, Optional[str], Optional[str], Optional
     """Menú interactivo para seleccionar archivos y parámetros con ventanas"""
     clear_screen()
     print_header()
-    
+
     # CONFIGURACIÓN PREVIA (Solicitud)
     config_ident = ask_identification_mode()
-    
+    if config_ident is None:
+        return "", "", None, None, None, [], {}
+
     clear_screen()
     print_header()
-    
+
     print("📋 PASO 1: Seleccionar Archivos")
     print("=" * 70)
-    
+
     print("\n1️⃣ Abriendo ventana para seleccionar Archivos (puedes elegir varios a la vez)...")
     archivos = seleccionar_archivos_ventana_multiple("Selecciona las Bases de Datos")
-    
+
     if len(archivos) < 2:
         print("❌ Debes seleccionar al menos 2 archivos.")
         return "", "", None, None, None, [], {}
-    
+
     path_a, path_b = archivos[0], archivos[1]
     print(f"  ✓ Archivo A: {os.path.basename(path_a)}")
     print(f"  ✓ Archivo B: {os.path.basename(path_b)}")
-    
+
     # Por defecto seleccionamos todos los análisis, luego se filtra al guardar
     selected_analysis_types = None
-    
+
     # Seleccionar hoja A
     selected_sheet_a = None
     if path_a.lower().endswith(('.xlsx', '.xls')):
         selected_sheet_a = select_sheet_interactive(path_a)
-    
+
     # Seleccionar hoja B
     selected_sheet_b = None
     if path_b.lower().endswith(('.xlsx', '.xls')):
         selected_sheet_b = select_sheet_interactive(path_b)
-    
+
     # Columna clave (detección automática)
     clear_screen()
     print_header()
     print("📋 PASO 2: Configurar Columna Clave")
     print("=" * 70)
-    
+
     print("\n✓ Configuración lista.")
-    
+
     selected_key = None
-    
+
     return path_a, path_b, selected_key, selected_sheet_a, selected_sheet_b, selected_analysis_types, config_ident
 
 
@@ -495,76 +609,76 @@ def detect_header_row_xlsx(path: str, sheet_name: Optional[str] = None) -> Tuple
     """
     try:
         wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
-        
+
         if sheet_name and sheet_name in wb.sheetnames:
             ws = wb[sheet_name]
         else:
             ws = wb.active
-        
+
         # Validación: asegúrate de que ws no es None
         if ws is None:
             print(f"⚠ No se pudo acceder a la hoja en {path}")
             wb.close()
             return 0, []
-        
+
         # Validación: verificar si la hoja está vacía
         if ws.max_row is None or ws.max_row == 0:
             print(f"⚠ La hoja '{sheet_name or 'activa'}' está vacía")
             wb.close()
             return 0, []
-        
+
         key_set = {k.lower() for k in COMMON_KEY_NAMES}
         # Limitar verificación para no afectar performance en archivos grandes
         max_check_rows = min(20, ws.max_row)
-        
+
         best_match = (-1, 0, [])
-        
+
         for i in range(1, max_check_rows + 1):
             # CORRECCIÓN: Validar que iter_rows devuelva datos
             rows_iter = list(ws.iter_rows(min_row=i, max_row=i, values_only=True))
-            
+
             # Validar que hay al menos una fila
             if not rows_iter or len(rows_iter) == 0:
                 continue
-            
+
             row = rows_iter[0]
-            
+
             # Validar que la fila no esté vacía
             if not row or all(v is None or str(v).strip() == '' for v in row):
                 continue
-            
+
             row_vals = [str(v).strip().lower() if v else '' for v in row]
-            
+
             # Contar coincidencias con claves comunes
             matches = sum(1 for v in row_vals if v in key_set)
-            
+
             # Verificar si hay datos válidos (no vacíos)
             non_empty = sum(1 for v in row_vals if v and v.strip())
-            
+
             if matches > best_match[1] and non_empty > 0:
                 best_match = (i - 1, matches, row_vals)
-        
+
         # Estrategia 1: Si encontramos encabezados por coincidencia clara, usarlos
         if best_match[0] >= 0 and best_match[1] > 0:
             wb.close()
             return best_match[0], best_match[2]
-        
+
         # ESTRATEGIA SECUNDARIA: Detección por densidad
         # Si no encontramos palabras clave, buscamos la primera fila con más columnas
         print("  ℹ No se detectaron palabras clave en encabezados. Buscando por densidad de datos...")
         max_cols = 0
         best_density_row = 0
-        
+
         # IMPORTANTE: No cerrar el workbook todavía porque lo usamos aquí
         for i in range(1, min(15, ws.max_row)):
             row_vals = list(ws.iter_rows(min_row=i, max_row=i, values_only=True))[0]
             non_empty = sum(1 for v in row_vals if v is not None and str(v).strip() != '')
-            
+
             # Si encontramos una fila con significativamente más columnas
             if non_empty > max_cols:
                 max_cols = non_empty
                 best_density_row = i - 1
-        
+
         # Si la fila detectada por densidad tiene al menos 2 columnas, usarla
         if max_cols >= 2:
             print(f"  ✓ Encabezado detectado por estructura en fila {best_density_row + 1}")
@@ -572,12 +686,12 @@ def detect_header_row_xlsx(path: str, sheet_name: Optional[str] = None) -> Tuple
             cols = list(ws.iter_rows(min_row=best_density_row+1, max_row=best_density_row+1, values_only=True))[0]
             wb.close()
             return best_density_row, list(cols)
-            
+
         wb.close()
         # Si no se encontró encabezado, retornar 0
         print(f"⚠ No se detectó encabezado claro en '{sheet_name or 'hoja activa'}', usando fila 1")
         return 0, []
-    
+
     except (OSError, ValueError, KeyError, IndexError, TypeError) as e:
         print(f"❌ Error detectando encabezado: {e}")
         return 0, []
@@ -586,14 +700,14 @@ def detect_header_row_xlsx(path: str, sheet_name: Optional[str] = None) -> Tuple
 def load_table(path: str, sheet_name: Optional[str] = None, auto_detect: bool = True, use_chunks: bool = False) -> pd.DataFrame:
     """Carga tabla de XLSX/CSV con detección automática de encabezado y optimización para archivos grandes (>8MB)"""
     ext = os.path.splitext(path)[1].lower()
-    
+
     # Verificar tamaño del archivo
     file_size_mb = os.path.getsize(path) / (1024 * 1024)
     is_large_file = file_size_mb > 8
-    
+
     if is_large_file:
         print(f"  📦 Archivo grande detectado: {file_size_mb:.2f} MB - aplicando optimizaciones...")
-    
+
     try:
         if ext in ['.xls', '.xlsx']:
             # Detectar encabezado automáticamente
@@ -619,7 +733,7 @@ def load_table(path: str, sheet_name: Optional[str] = None, auto_detect: bool = 
 
             # CORRECCIÓN: Convertir columnas a string antes de usar .str
             # Manejar columnas sin nombre (None o NaN)
-            df.columns = [str(col).strip() if col is not None and str(col) != 'nan' 
+            df.columns = [str(col).strip() if col is not None and str(col) != 'nan'
                          else f'Columna_{i}' for i, col in enumerate(df.columns)]
 
             # IMPORTANTE: fillna ANTES de convertir a category
@@ -666,7 +780,7 @@ def load_table(path: str, sheet_name: Optional[str] = None, auto_detect: bool = 
                 df = pd.read_csv(path, dtype=str, keep_default_na=False, engine='c', low_memory=False)
 
             # CORRECCIÓN: Igual para CSV
-            df.columns = [str(col).strip() if col is not None and str(col) != 'nan' 
+            df.columns = [str(col).strip() if col is not None and str(col) != 'nan'
                          else f'Columna_{i}' for i, col in enumerate(df.columns)]
             df = df.fillna('')
             return df
@@ -685,17 +799,17 @@ def auto_detect_key_column(df: pd.DataFrame, provided_key: Optional[str] = None)
     """
     if provided_key and provided_key in df.columns:
         return provided_key
-    
+
     # Buscar nombres comunes
     for name in COMMON_KEY_NAMES:
         for col in df.columns:
             if col.lower() == name.lower():
                 return col
-    
+
     # Buscar columna que parezca identificador (menos valores nulos)
     non_null_counts = (df != '').sum()
     best_col = non_null_counts.idxmax()
-    
+
     # Asegurar que devolvemos un string
     return str(best_col)
 
@@ -708,7 +822,7 @@ def analyze_column_uniqueness(df: pd.DataFrame, col: str) -> dict:
     unique = values.nunique()
     null_count = (values == '').sum()
     duplicates = total - unique
-    
+
     return {
         'total': total,
         'unique': unique,
@@ -718,7 +832,7 @@ def analyze_column_uniqueness(df: pd.DataFrame, col: str) -> dict:
     }
 
 
-def find_matching_key_columns(df_a: pd.DataFrame, df_b: pd.DataFrame, 
+def find_matching_key_columns(df_a: pd.DataFrame, df_b: pd.DataFrame,
                               key_a: str, key_b: str) -> Tuple[str, str]:
     """
     Encuentra las mejores columnas clave para comparación.
@@ -726,28 +840,28 @@ def find_matching_key_columns(df_a: pd.DataFrame, df_b: pd.DataFrame,
     """
     stats_a = analyze_column_uniqueness(df_a, key_a)
     stats_b = analyze_column_uniqueness(df_b, key_b)
-    
+
     # Si ambas columnas tienen buena unicidad, usarlas
     if stats_a['uniqueness_pct'] > 90 and stats_b['uniqueness_pct'] > 90:
         return key_a, key_b
-    
+
     # Buscar mejor coincidencia
     best_score = -1
     best_pair = (key_a, key_b)
-    
+
     for col_a in df_a.columns[:10]:  # Limitar búsqueda a primeras 10 columnas
         stats_a_alt = analyze_column_uniqueness(df_a, col_a)
-        
+
         for col_b in df_b.columns[:10]:
             stats_b_alt = analyze_column_uniqueness(df_b, col_b)
-            
+
             # Score: suma de unicidades
             score = stats_a_alt['uniqueness_pct'] + stats_b_alt['uniqueness_pct']
-            
+
             if score > best_score:
                 best_score = score
                 best_pair = (col_a, col_b)
-    
+
     return best_pair
 
 
@@ -755,7 +869,7 @@ def mark_incomplete(df: pd.DataFrame, exclude_cols: Optional[list] = None) -> pd
     """Marca filas con datos incompletos"""
     if exclude_cols is None:
         exclude_cols = []
-    
+
     cols_check = [c for c in df.columns if c not in exclude_cols]
     mask = (df[cols_check] == '').any(axis=1)
     return df[mask]
@@ -769,9 +883,9 @@ def format_rut(rut_str: str) -> str:
     """
     if not rut_str or rut_str == '':
         return ''
-    
+
     rut_str = str(rut_str).strip()
-    
+
     # Extraer solo dígitos y K (dígito verificador puede ser K)
     rut_limpio = ''
     for c in rut_str:
@@ -779,22 +893,22 @@ def format_rut(rut_str: str) -> str:
             rut_limpio += c
         elif c.upper() == 'K':
             rut_limpio += c.upper()
-    
+
     if len(rut_limpio) < 2:
         return rut_str
-    
+
     # Separar cuerpo y dígito verificador
     # El dígito verificador está al final (puede ser número o K)
     digito = rut_limpio[-1]
     cuerpo = rut_limpio[:-1]
-    
+
     # Formatear el cuerpo con puntos cada 3 dígitos de derecha a izquierda
     cuerpo_formateado = ''
     for i, digit in enumerate(reversed(cuerpo)):
         if i > 0 and i % 3 == 0:
             cuerpo_formateado = '.' + cuerpo_formateado
         cuerpo_formateado = digit + cuerpo_formateado
-    
+
     return f"{cuerpo_formateado}-{digito}"
 
 
@@ -815,14 +929,14 @@ def find_null_data_columns(df: pd.DataFrame, exclude_cols: Optional[list] = None
     """
     if exclude_cols is None:
         exclude_cols = []
-    
+
     null_info = {
         'columnas_con_nulos': [],
         'cantidad_nulos_por_columna': {},
         'porcentaje_nulos_por_columna': {},
         'total_celdas_nulas': 0
     }
-    
+
     for col in df.columns:
         if col not in exclude_cols and col != '__KEY__':
             # Contar nulos (valores vacíos)
@@ -832,7 +946,7 @@ def find_null_data_columns(df: pd.DataFrame, exclude_cols: Optional[list] = None
                 null_info['cantidad_nulos_por_columna'][col] = int(null_count)
                 null_info['porcentaje_nulos_por_columna'][col] = (null_count / len(df) * 100)
                 null_info['total_celdas_nulas'] += int(null_count)
-    
+
     return null_info
 
 
@@ -841,22 +955,22 @@ def print_null_stats_table(null_info: dict, title: str):
     print(f"\n📊 {title}")
     print(f"  Columnas con datos nulos: {len(null_info['columnas_con_nulos'])}")
     print(f"  Total celdas nulas: {null_info['total_celdas_nulas']:,}")
-    
+
     if null_info['columnas_con_nulos']:
         # Encabezado de la tabla
         print(f"\n  {'COLUMNA':<50} | {'CANTIDAD':>10} | {'% NULOS':>8}")
         print("  " + "-"*76)
-        
+
         # Preparar datos para ordenar
         data = []
         for col in null_info['columnas_con_nulos']:
             qty = null_info['cantidad_nulos_por_columna'][col]
             pct = null_info['porcentaje_nulos_por_columna'][col]
             data.append((col, qty, pct))
-        
+
         # Ordenar por porcentaje descendente (los más críticos primero)
         data.sort(key=lambda x: x[2], reverse=True)
-        
+
         for col, qty, pct in data:
             # Truncar nombre si es muy largo
             col_display = (col[:47] + '...') if len(col) > 47 else col
@@ -872,35 +986,35 @@ def crear_reporte_datos_faltantes(df: pd.DataFrame, key_column: str, _output_dir
     # Filtrar solo filas con al menos un dato nulo
     mask = (df != '').sum(axis=1) < len(df.columns) - 1  # Al menos una columna vacía
     df_with_nulls = df[mask].copy()
-    
+
     if df_with_nulls.empty:
         return None
-    
+
     # Crear reporte detallado
     reporte = []
-    
+
     for _, row in df_with_nulls.iterrows():
         usuario_key = row[key_column]
         campos_nulos = []
-        
+
         for col in df.columns:
             if col != '__KEY__' and col != key_column:
                 if row[col] == '':
                     campos_nulos.append(col)
-        
+
         if campos_nulos:
             reporte.append({
                 key_column: format_rut(usuario_key),  # Formatear RUT
                 'Campos_Nulos': ', '.join(campos_nulos),
                 'Cantidad_Campos_Faltantes': len(campos_nulos)
             })
-    
+
     if not reporte:
         return None
-    
+
     df_reporte = pd.DataFrame(reporte)
     df_reporte = df_reporte.sort_values('Cantidad_Campos_Faltantes', ascending=False)
-    
+
     return df_reporte
 
 
@@ -916,10 +1030,10 @@ def search_in_dataframe(df: pd.DataFrame, term: str) -> pd.DataFrame:
     try:
         mask = pd.DataFrame(False, index=df.index, columns=df.columns)
         cols_obj = df.select_dtypes(include=['object', 'string']).columns
-        
+
         for col in cols_obj:
             mask[col] = df[col].astype(str).str.upper().str.contains(term, na=False, regex=False)
-        
+
         return df[mask.any(axis=1)]
     except (ValueError, TypeError, AttributeError):
         return pd.DataFrame()
@@ -931,18 +1045,18 @@ def print_dataframe_table(df_input: pd.DataFrame, max_rows: int = 10):
         # Mostrar un resumen (primeras columnas para identificar)
         cols_prio = [c for c in df_input.columns if any(x in c.lower() for x in ['nombre', 'paterno', 'materno', 'rut', 'id', 'centro', 'comuna'])]
         cols_rest = [c for c in df_input.columns if c not in cols_prio]
-        cols_show = (cols_prio + cols_rest)[:8] 
-        
+        cols_show = (cols_prio + cols_rest)[:8]
+
         from tabulate import tabulate
         # Preparar datos para tabulate
         df_print = df_input[cols_show].copy()
         df_print = df_print.fillna('')
         df_print = df_print.astype(str)
-        
+
         # Truncar columnas largas
         for col in df_print.columns:
             df_print[col] = df_print[col].str.slice(0, 25)
-        
+
         # Ajustar nombres de columnas
         df_print.columns = [str(c)[:15] for c in df_print.columns]
 
@@ -964,7 +1078,7 @@ def print_dataframe_table(df_input: pd.DataFrame, max_rows: int = 10):
         print(f"Error formato: {e}")
         print("-" * 40)
         print(df_input.head(max_rows).to_string(index=False))
-        if len(df_input) > max_rows: 
+        if len(df_input) > max_rows:
             print(f"      ... y {len(df_input)-max_rows} filas más.")
         print("-" * 40)
 
@@ -972,56 +1086,80 @@ def print_dataframe_table(df_input: pd.DataFrame, max_rows: int = 10):
 def save_outputs_single_file(reportes_dict: dict, output_dir: str = '.', selected_analysis_types: Optional[list] = None):
     """
     Guarda reportes en un archivo Excel según los tipos de análisis seleccionados
-    
+
     Args:
         reportes_dict: Diccionario con los DataFrames de reportes
         output_dir: Directorio donde guardar el archivo
         selected_analysis_types: Lista con tipos ['duplicados', 'faltantes', 'incompletos'] o None para todos
     """
-    
-    
+
+
     # -------------------------------------------------------------
     # DIAGNÓSTICO E INTERACCIÓN PREVIA
     # -------------------------------------------------------------
     print("\n" + "="*60)
     print("📋  DIAGNÓSTICO DE RESULTADOS ENCONTRADOS")
     print("="*60)
-    
+
     has_results = False
-    
+
     # Obtener totales para cálculos de porcentaje
     total_a = reportes_dict.get('_TOTAL_A', 0)
     total_b = reportes_dict.get('_TOTAL_B', 0)
     nombre_a = reportes_dict.get('_NOMBRE_A', '')
     nombre_b = reportes_dict.get('_NOMBRE_B', '')
 
-    for report_name, val in reportes_dict.items():
-        if not report_name.startswith('_') and isinstance(val, pd.DataFrame):
-            # Omitir claves genéricas "en A" y "en B" si tienen nombres específicos
-            if (report_name.endswith(" en A") and nombre_a != "A") or \
-            (report_name.endswith(" en B") and nombre_b != "B"):
-                continue
-            
-            count = len(val)
-            icon = "✅" if count > 0 else "⚪"
-            
-            # Calcular porcentaje si aplica
-            pct_str = ""
-            if nombre_a and (f"en {nombre_a}" in report_name or "en A" in report_name):
-                if total_a > 0:
-                    pct = (count / total_a) * 100
-                    pct_str = f" ({pct:5.2f}% de {nombre_a})"
-            elif nombre_b and (f"en {nombre_b}" in report_name or "en B" in report_name):
-                if total_b > 0:
-                    pct = (count / total_b) * 100
-                    pct_str = f" ({pct:5.2f}% de {nombre_b})"
-            
-            print(f"  {icon} {report_name:<30}: {count:>6} registros{pct_str}")
-            if count > 0:
-                has_results = True
-            
-    print("-" * 60)
+    # Definir orden de prioridad para los reportes
+    priority_order = [
+        '_COMPLETO_CON_MARCADORES',
+        'TODOS - Faltantes',
+        'Faltantes en ',
+        'TODOS - Duplicados',
+        'Duplicados en ',
+        'TODOS - Incompletos',
+        'Incompletos en ',
+        'DIAGNOSTICO_PRIORITARIO'
+    ]
     
+    def get_priority(name):
+        """Devuelve la prioridad de un reporte basado en su nombre"""
+        for idx, pattern in enumerate(priority_order):
+            if pattern in name:
+                return idx
+        return len(priority_order)  # Reportes sin prioridad van al final
+    
+    # Ordenar reportes por prioridad
+    sorted_reports = sorted(
+        [(k, v) for k, v in reportes_dict.items() if not k.startswith('_') and isinstance(v, pd.DataFrame)],
+        key=lambda x: (get_priority(x[0]), x[0])
+    )
+    
+    for report_name, val in sorted_reports:
+        # Omitir claves genéricas "en A" y "en B" si tienen nombres específicos
+        if (report_name.endswith(" en A") and nombre_a != "A") or \
+        (report_name.endswith(" en B") and nombre_b != "B"):
+            continue
+
+        count = len(val)
+        icon = "✅" if count > 0 else "⚪"
+
+        # Calcular porcentaje si aplica
+        pct_str = ""
+        if nombre_a and (f"en {nombre_a}" in report_name or "en A" in report_name):
+            if total_a > 0:
+                pct = (count / total_a) * 100
+                pct_str = f" ({pct:5.2f}% de {nombre_a})"
+        elif nombre_b and (f"en {nombre_b}" in report_name or "en B" in report_name):
+            if total_b > 0:
+                pct = (count / total_b) * 100
+                pct_str = f" ({pct:5.2f}% de {nombre_b})"
+
+        print(f"  {icon} {report_name:<30}: {count:>6} registros{pct_str}")
+        if count > 0:
+            has_results = True
+
+    print("-" * 60)
+
     if not has_results:
         print("\n⚠  ATENCIÓN: No se encontraron diferencias ni datos para reportar.")
 
@@ -1033,40 +1171,40 @@ def save_outputs_single_file(reportes_dict: dict, output_dir: str = '.', selecte
         print("-" * 60)
         print("Puedes buscar por: Nombre, Apellido Paterno, Materno o RUT")
         resp_buscar = input("¿Deseas buscar algún usuario en los resultados? (s/n): ").strip().lower()
-        
+
         if resp_buscar == 'n' or resp_buscar == 'no':
             break
-            
+
         if resp_buscar == 's' or resp_buscar == 'si' or resp_buscar == 'y':
             termino = input("\n   ✍️  Ingrese término de búsqueda: ").strip().upper()
             if not termino:
                 continue
-                
+
             print(f"\n   ⏳ Buscando '{termino}' en todas las tablas generadas...")
             encontrados_total = 0
-            
+
             for report_name, df_res in reportes_dict.items():
                 if not (isinstance(df_res, pd.DataFrame) and not df_res.empty and not report_name.startswith('_')):
                     continue
 
                 # Usar función auxiliar para búsqueda (reduce nesting y try-except genérico)
                 filas_encontradas = search_in_dataframe(df_res, termino)
-                
+
                 if filas_encontradas.empty:
                     continue
 
                 count = len(filas_encontradas)
                 encontrados_total += count
                 print(f"\n   👉 Encontrado en tabla '{report_name}': {count} coincidencias")
-                
+
                 # Imprimir tabla bien formateada
                 print_dataframe_table(filas_encontradas)
-            
+
             if encontrados_total == 0:
                 print(f"\n   ❌ No se encontraron registros que contengan '{termino}'.")
             else:
                 print(f"\n   ✅ Total coincidencias encontradas: {encontrados_total}")
-            
+
             input("\n   Presione Enter para continuar buscando o 'n' en la próxima pregunta...")
         else:
             print("   ⚠️ Opción no válida. Ingrese 's' para buscar o 'n' para continuar.")
@@ -1074,22 +1212,23 @@ def save_outputs_single_file(reportes_dict: dict, output_dir: str = '.', selecte
     print("\n¿Qué datos deseas descargar?")
     print("  1. Duplicados")
     print("  2. Incompletos")
-    print("  3. Todos (Duplicados + Incompletos)")
+    print("  3. Faltantes")
+    print("  4. Todos (Duplicados + Incompletos + Faltantes)")
     print("  0. Volver al menú principal")
     print("  x. Detener programa")
     print("="*60)
 
     while True:
-        seleccion = input("\nEscribe tu opción (1-3, 0, x): ").strip().lower()
-        
+        seleccion = input("\nEscribe tu opción (1-4, 0, x): ").strip().lower()
+
         if seleccion == '0':
             print("\n🔙 Volviendo al menú principal...")
             return None
-        
+
         if seleccion == 'x':
             print("\n👋 Deteniendo programa...")
             sys.exit()
-            
+
         if seleccion == '1':
             selected_analysis_types = ['duplicados']
             break
@@ -1097,8 +1236,10 @@ def save_outputs_single_file(reportes_dict: dict, output_dir: str = '.', selecte
             selected_analysis_types = ['incompletos']
             break
         elif seleccion == '3':
-            # Excluimos 'faltantes' explícitamente como se solicitó
-            selected_analysis_types = ['duplicados', 'incompletos']
+            selected_analysis_types = ['faltantes']
+            break
+        elif seleccion == '4':
+            selected_analysis_types = ['duplicados', 'incompletos', 'faltantes']
             break
         else:
             print("❌ Opción no válida. Intenta de nuevo.")
@@ -1112,20 +1253,20 @@ def save_outputs_single_file(reportes_dict: dict, output_dir: str = '.', selecte
 
     print(f"\n  📂 Archivo destino: {os.path.basename(xlsx_path)}")
     print("\n🚀 Iniciando generación de archivo Excel...")
-    
+
     # Calcular tamaño estimado de datos
-    total_rows = sum(len(df) for key, df in reportes_dict.items() 
+    total_rows = sum(len(df) for key, df in reportes_dict.items()
                     if isinstance(df, pd.DataFrame) and not key.startswith('_'))
-    
+
     if total_rows > 50000:
         print(f"  📦 Generando reporte grande ({total_rows:,} filas totales)...")
         print("  ⏳ Esto puede tomar unos minutos...")
         print_progress("Progreso", 0)
-    
+
     try:
         # Importar estilos
         from openpyxl.styles import Font, Border, Side, Alignment, PatternFill
-        
+
         # Definir bordes y estilos
         thin_border = Border(
             left=Side(style='thin'),
@@ -1137,20 +1278,20 @@ def save_outputs_single_file(reportes_dict: dict, output_dir: str = '.', selecte
         header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
         null_fill = PatternFill(start_color="FF0000", end_color="FF0000", fill_type="solid")
         null_font = Font(color="FFFFFF")
-        
+
         # Crear workbook
         wb = openpyxl.Workbook()
         if wb.active is not None:
             wb.remove(wb.active)  # Eliminar hoja por defecto
-        
+
         # Recuperar nombres de archivos para títulos dinámicos
         nombre_a = reportes_dict.get('_NOMBRE_A', 'A')
         nombre_b = reportes_dict.get('_NOMBRE_B', 'B')
-        
+
         # Función auxiliar para escribir DataFrame y aplicar formato
         def write_and_format_dataframe(ws, df, start_row, start_col, titulo=None):
             """Escribe un DataFrame en la hoja y aplica formato, retorna la columna final"""
-            
+
             # Si el DataFrame está vacío, escribir solo el título
             if df.empty:
                 if titulo:
@@ -1160,21 +1301,21 @@ def save_outputs_single_file(reportes_dict: dict, output_dir: str = '.', selecte
                     title_cell.alignment = Alignment(horizontal='center', vertical='center')
                     title_cell.border = thin_border
                 return start_col + 1
-            
+
             # Formatear RUTs en el DataFrame si existe la columna
             df_display = df.copy()
             rut_columns = [c for c in df_display.columns if c.lower() in ['rut', 'id_rut', 'documento', 'cedula', 'doc']]
             if rut_columns:
                 col_rut = rut_columns[0]
                 df_display[col_rut] = df_display[col_rut].apply(format_rut)
-            
+
             # Escribir título si se proporciona
             current_row = start_row
             if titulo:
                 # Fusionar celdas para el título
                 end_col = start_col + len(df_display.columns) - 1
                 try:
-                    ws.merge_cells(start_row=current_row, start_column=start_col, 
+                    ws.merge_cells(start_row=current_row, start_column=start_col,
                         end_row=current_row, end_column=end_col)
                 except (ValueError, TypeError, AttributeError):
                     pass
@@ -1184,7 +1325,7 @@ def save_outputs_single_file(reportes_dict: dict, output_dir: str = '.', selecte
                 title_cell.alignment = Alignment(horizontal='center', vertical='center')
                 title_cell.border = thin_border
                 current_row += 1
-            
+
             # Escribir encabezados
             for col_idx, col_name in enumerate(df_display.columns, start=start_col):
                 cell = ws.cell(row=current_row, column=col_idx, value=col_name)
@@ -1192,7 +1333,7 @@ def save_outputs_single_file(reportes_dict: dict, output_dir: str = '.', selecte
                 cell.fill = header_fill
                 cell.border = thin_border
                 cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
-            
+
             # Escribir datos
             for row_idx, row_data in enumerate(df_display.values, start=current_row + 1):
                 for col_idx, value in enumerate(row_data, start=start_col):
@@ -1201,17 +1342,17 @@ def save_outputs_single_file(reportes_dict: dict, output_dir: str = '.', selecte
                     cell = ws.cell(row=row_idx, column=col_idx, value=display_value)
                     cell.border = thin_border
                     cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
-                    
+
                     # Aplicar formato rojo para celdas nulas/vacías
                     if is_null:
                         cell.fill = null_fill
                         cell.font = null_font
-            
+
             # Ajustar ancho de columnas
             for col_idx in range(start_col, start_col + len(df_display.columns)):
                 max_length = 0
                 column_letter = get_column_letter(col_idx)
-                
+
                 # Calcular desde el título si existe, si no desde los encabezados
                 check_start_row = start_row
                 for row_idx in range(check_start_row, check_start_row + len(df_display) + 2):
@@ -1221,22 +1362,22 @@ def save_outputs_single_file(reportes_dict: dict, output_dir: str = '.', selecte
                             max_length = max(max_length, len(str(cell.value)))
                     except (AttributeError, TypeError, ValueError):
                         pass
-                
+
                 adjusted_width = min(max_length + 2, 50)
                 ws.column_dimensions[column_letter].width = adjusted_width
-            
+
             # Retorna el próximo col_idx después de esta tabla
             return start_col + len(df_display.columns)
-        
+
         # Crear hojas con tablas lado a lado
         print("  💾 Generando archivo Excel...")
-        
+
         # Determinar qué hojas crear según selected_analysis_types
         if selected_analysis_types is None:
             tipos_a_procesar = ['duplicados', 'faltantes', 'incompletos']
         else:
             tipos_a_procesar = selected_analysis_types
-        
+
         # Contar hojas a crear
         hojas_a_crear = []
         if 'faltantes' in tipos_a_procesar:
@@ -1245,10 +1386,10 @@ def save_outputs_single_file(reportes_dict: dict, output_dir: str = '.', selecte
             hojas_a_crear.extend(['duplicados', 'todos_duplicados'])
         if 'incompletos' in tipos_a_procesar:
             hojas_a_crear.extend(['incompletos', 'todos_incompletos'])
-        
+
         total_hojas = len(hojas_a_crear) + 2  # +2 para usuarios faltantes
         hoja_actual = 0
-        
+
         # DEBUG: Mostrar qué hay en reportes_dict
         print(f"\n  🔍 Debug - Análisis seleccionados: {tipos_a_procesar}")
         print("  🔍 Debug - Claves en reportes_dict:")
@@ -1258,13 +1399,13 @@ def save_outputs_single_file(reportes_dict: dict, output_dir: str = '.', selecte
                     print(f"      - {report_name}: {len(reportes_dict[report_name])} filas")
                 else:
                     print(f"      - {report_name}: {type(reportes_dict[report_name])}")
-        
+
         # [MODIFICADO] Se omite la pestaña de Diagnóstico en el Excel (solo se ve en terminal)
-        
+
         # 1. FALTANTES (solo si está en tipos_a_procesar)
         if 'faltantes' in tipos_a_procesar:
             print_progress("Guardando", (hoja_actual / total_hojas) * 100)
-            
+
             # Primera hoja: TODOS los faltantes consolidados
             if 'TODOS - Faltantes' in reportes_dict and not reportes_dict['TODOS - Faltantes'].empty:
                 ws_faltantes = wb.create_sheet("RESUMEN DIFERENCIAS")
@@ -1272,27 +1413,22 @@ def save_outputs_single_file(reportes_dict: dict, output_dir: str = '.', selecte
                 print(f"    ✓ Creada hoja: RESUMEN DIFERENCIAS ({len(reportes_dict['TODOS - Faltantes'])} filas)")
             hoja_actual += 1
             print_progress("Guardando", (hoja_actual / total_hojas) * 100)
-            
-            # Segunda hoja: Faltantes en B (Lo que está en A pero no en B -> A - B)
-            if 'Faltantes en B' in reportes_dict and not reportes_dict['Faltantes en B'].empty:
-                nombre_hoja = "RESTA (A - B)"
-                ws_falt_b = wb.create_sheet(nombre_hoja)
-                write_and_format_dataframe(ws_falt_b, reportes_dict['Faltantes en B'], 1, 1, f"NO ENCONTRADOS: Están en {nombre_a} pero NO en {nombre_b}")
-                print(f"    ✓ Creada hoja: {nombre_hoja} ({len(reportes_dict['Faltantes en B'])} filas)")
-            
-            # Tercera hoja: Faltantes en A (Lo que está en B pero no en A -> B - A)
-            if 'Faltantes en A' in reportes_dict and not reportes_dict['Faltantes en A'].empty:
-                nombre_hoja = "SOBRANTES (B - A)"
-                ws_falt_a = wb.create_sheet(nombre_hoja)
-                write_and_format_dataframe(ws_falt_a, reportes_dict['Faltantes en A'], 1, 1, f"EXTRAS: Están en {nombre_b} pero NO en {nombre_a}")
-                print(f"    ✓ Creada hoja: {nombre_hoja} ({len(reportes_dict['Faltantes en A'])} filas)")
+
+            # Hojas adicionales: Faltantes separados por hoja de origen
+            for report_name, df in reportes_dict.items():
+                if report_name.startswith('Faltantes en ') and report_name not in [f'Faltantes en {nombre_a}', f'Faltantes en {nombre_b}', 'Faltantes en A', 'Faltantes en B']:
+                    if isinstance(df, pd.DataFrame) and not df.empty:
+                        ws = wb.create_sheet(report_name)
+                        write_and_format_dataframe(ws, df, 1, 1, report_name)
+                        print(f"    ✓ Creada hoja: {report_name} ({len(df)} filas)")
+
             hoja_actual += 1
             print_progress("Guardando", (hoja_actual / total_hojas) * 100)
-        
+
         # 2. DUPLICADOS (solo si está en tipos_a_procesar)
         if 'duplicados' in tipos_a_procesar:
             print_progress("Guardando", (hoja_actual / total_hojas) * 100)
-            
+
             # Primera hoja: TODOS los duplicados consolidados
             if 'TODOS - Duplicados' in reportes_dict and not reportes_dict['TODOS - Duplicados'].empty:
                 ws_duplicados = wb.create_sheet("TODOS - Duplicados")
@@ -1300,25 +1436,26 @@ def save_outputs_single_file(reportes_dict: dict, output_dir: str = '.', selecte
                 print(f"    ✓ Creada hoja: TODOS - Duplicados ({len(reportes_dict['TODOS - Duplicados'])} filas)")
             hoja_actual += 1
             print_progress("Guardando", (hoja_actual / total_hojas) * 100)
-            
+
             # Segunda hoja: Duplicados en A
             if 'Duplicados en A' in reportes_dict and not reportes_dict['Duplicados en A'].empty:
                 ws_dup_a = wb.create_sheet(f"Duplicados en {nombre_a}")
                 write_and_format_dataframe(ws_dup_a, reportes_dict['Duplicados en A'], 1, 1, f"Duplicados en {nombre_a}")
                 print(f"    ✓ Creada hoja: Duplicados en {nombre_a} ({len(reportes_dict['Duplicados en A'])} filas)")
-            
+
             # Tercera hoja: Duplicados en B
             if 'Duplicados en B' in reportes_dict and not reportes_dict['Duplicados en B'].empty:
                 ws_dup_b = wb.create_sheet(f"Duplicados en {nombre_b}")
                 write_and_format_dataframe(ws_dup_b, reportes_dict['Duplicados en B'], 1, 1, f"Duplicados en {nombre_b}")
                 print(f"    ✓ Creada hoja: Duplicados en {nombre_b} ({len(reportes_dict['Duplicados en B'])} filas)")
+
             hoja_actual += 1
             print_progress("Guardando", (hoja_actual / total_hojas) * 100)
-        
+
         # 3. INCOMPLETOS (solo si está en tipos_a_procesar)
         if 'incompletos' in tipos_a_procesar:
             print_progress("Guardando", (hoja_actual / total_hojas) * 100)
-            
+
             # Primera hoja: TODOS los incompletos consolidados
             if 'TODOS - Incompletos' in reportes_dict and not reportes_dict['TODOS - Incompletos'].empty:
                 ws_incompletos = wb.create_sheet("TODOS - Incompletos")
@@ -1326,26 +1463,26 @@ def save_outputs_single_file(reportes_dict: dict, output_dir: str = '.', selecte
                 print(f"    ✓ Creada hoja: TODOS - Incompletos ({len(reportes_dict['TODOS - Incompletos'])} filas)")
             hoja_actual += 1
             print_progress("Guardando", (hoja_actual / total_hojas) * 100)
-            
+
             # Segunda hoja: Incompletos en A
             if 'Incompletos en A' in reportes_dict and not reportes_dict['Incompletos en A'].empty:
                 ws_inc_a = wb.create_sheet(f"Incompletos en {nombre_a}")
                 write_and_format_dataframe(ws_inc_a, reportes_dict['Incompletos en A'], 1, 1, f"Incompletos en {nombre_a}")
                 print(f"    ✓ Creada hoja: Incompletos en {nombre_a} ({len(reportes_dict['Incompletos en A'])} filas)")
-            
+
             # Tercera hoja: Incompletos en B
             if 'Incompletos en B' in reportes_dict and not reportes_dict['Incompletos en B'].empty:
                 ws_inc_b = wb.create_sheet(f"Incompletos en {nombre_b}")
                 write_and_format_dataframe(ws_inc_b, reportes_dict['Incompletos en B'], 1, 1, f"Incompletos en {nombre_b}")
                 print(f"    ✓ Creada hoja: Incompletos en {nombre_b} ({len(reportes_dict['Incompletos en B'])} filas)")
         print_progress("Guardando", (hoja_actual / total_hojas) * 100)
-        
+
         if 'Usuarios Faltantes B' in reportes_dict and not reportes_dict['Usuarios Faltantes B'].empty:
             ws = wb.create_sheet("Usuarios Faltantes B")
             write_and_format_dataframe(ws, reportes_dict['Usuarios Faltantes B'], 1, 1, f"Usuarios con Datos Faltantes en {nombre_b}")
         hoja_actual += 1
         print_progress("Guardando", (hoja_actual / total_hojas) * 100)
-        
+
         # Verificar que se hayan creado hojas
         if len(wb.worksheets) == 0:
             print("\n❌ ERROR: No hay datos para generar el reporte.")
@@ -1356,10 +1493,10 @@ def save_outputs_single_file(reportes_dict: dict, output_dir: str = '.', selecte
             print("\n   Intenta con un análisis diferente o verifica los archivos.")
             wb.close()
             return None
-        
+
         # Guardar con optimización para archivos grandes y manejo de errores de permisos
         print_progress("Guardando", 90)
-        
+
         # Verificar si el archivo ya existe y está bloqueado ANTES de intentar guardar
         if os.path.exists(xlsx_path):
             try:
@@ -1380,14 +1517,14 @@ def save_outputs_single_file(reportes_dict: dict, output_dir: str = '.', selecte
         except (PermissionError, OSError) as e:
             # Fallback de último recurso si aún así falla (ej: carpeta sin permisos)
             print(f"\n⚠ Error persistente al guardar en '{os.path.basename(xlsx_path)}': {e}")
-            
+
             # Intentar en carpeta temporal o con nombre garantizado único
             import random
             timestamp = int(time.time())
             rand = random.randint(1000, 9999)
             base = os.path.splitext(os.path.basename(xlsx_path))[0].split('_')[0] # Quedarse con parte base
             xlsx_path = os.path.join(output_dir, f"{base}_AUTOSAVE_{timestamp}_{rand}.xlsx")
-            
+
             print(f"   🚨 INTENTO FINAL: Guardando como '{os.path.basename(xlsx_path)}'...")
             try:
                 wb.save(xlsx_path)
@@ -1400,27 +1537,27 @@ def save_outputs_single_file(reportes_dict: dict, output_dir: str = '.', selecte
         wb.close()
         print_progress("Guardando", 100)
         print()  # salto de línea tras la barra
-        
+
         # Mostrar tamaño del archivo generado y ruta completa
         output_size_mb = os.path.getsize(xlsx_path) / (1024 * 1024)
         ruta_completa = os.path.abspath(xlsx_path)
-        
+
         print("\n✅ Archivo de reporte guardado exitosamente")
         print(f"   📂 Ruta: {ruta_completa}")
         print(f"   📦 Tamaño: {output_size_mb:.2f} MB")
-        
+
         if output_size_mb > 10:
             print("   ℹ Archivo grande generado. Puede tardar en abrir en Excel.")
-        
+
         # Preguntar si desea abrir el archivo
         print("\n" + "="*70)
         respuesta = input("¿Deseas abrir el archivo ahora? (Y/N): ").strip().upper()
-        
+
         if respuesta == 'Y' or respuesta == 'S' or respuesta == 'YES' or respuesta == 'SI' or respuesta == 'SÍ':
             abrir_archivo_xlsx(ruta_completa)
         else:
             print("\n📋 Puedes abrir el archivo manualmente desde la ruta indicada.")
-        
+
         return ruta_completa
     except Exception as e:  # pylint: disable=W0718
         print("\n❌ ERROR: No se pudo guardar el archivo Excel.")
@@ -1436,11 +1573,11 @@ def save_outputs_single_file(reportes_dict: dict, output_dir: str = '.', selecte
 
 def imprimir_tabla_bonita(df, titulo=None, _max_col_width=50):
     """
-    Imprime un DataFrame de manera legible tipo tabla SQL. 
+    Imprime un DataFrame de manera legible tipo tabla SQL.
     """
     if titulo:
         print(f"\n🔹 {titulo}")
-    
+
     if df.empty:
         print("   (Tabla vacía)")
         return
@@ -1448,16 +1585,16 @@ def imprimir_tabla_bonita(df, titulo=None, _max_col_width=50):
     try:
         from tabulate import tabulate
         df_print = df.copy()
-        
+
         # Limpiar datos para visualización
         df_print = df_print.fillna('')
         for col in df_print.columns:
             # Truncar textos muy largos (ajustado a 30)
             if df_print[col].dtype == 'object':
                 df_print[col] = df_print[col].astype(str).str.slice(0, 30)
-        
+
         print(tabulate(df_print, headers='keys', tablefmt='grid', showindex=False))
-        
+
     except ImportError:
         # Fallback si no está tabulate
         print("-" * 100)
@@ -1467,53 +1604,338 @@ def imprimir_tabla_bonita(df, titulo=None, _max_col_width=50):
         print(f"Error al imprimir tabla: {e}")
         print(df)
 
-def main(file_a: str, file_b: str, key: Optional[str] = None, sheet_a: Optional[str] = None, 
+# ===========================================
+# FALTANTES
+# ==================================
+def analyze_faltantes(df_a: pd.DataFrame, df_b: pd.DataFrame, nombre_a: str, nombre_b: str, reportes_dict: dict):
+    """Analiza y reporta registros faltantes entre A y B con marcadores visuales"""
+    # Usar sets para comparaciones rápidas en grandes volúmenes
+    set_b = set(df_b['__KEY__'].unique())
+    set_a = set(df_a['__KEY__'].unique())
+
+    print("  ⏳ Generando índices de comparación...")
+    print("  ⏳ Calculando restas (A - B) y (B - A)...")
+    
+    # NUEVO: Agregar columna de verificación en ambos DataFrames
+    df_a_marked = df_a.copy()
+    df_b_marked = df_b.copy()
+    
+    # Marcar en A: ✓ si está en B, ✗ si no está
+    df_a_marked['ESTADO_EN_B'] = df_a_marked['__KEY__'].apply(
+        lambda x: '✓ Encontrado' if x in set_b else '✗ No encontrado'
+    )
+    
+    # Marcar en B: ✓ si está en A, ✗ si no está
+    df_b_marked['ESTADO_EN_A'] = df_b_marked['__KEY__'].apply(
+        lambda x: '✓ Encontrado' if x in set_a else '✗ No encontrado'
+    )
+    
+    # Filtrar solo los que faltan
+    faltantes_en_b = df_a_marked[~df_a_marked['__KEY__'].isin(set_b)]
+    faltantes_en_a = df_b_marked[~df_b_marked['__KEY__'].isin(set_a)]
+    
+    solo_en_a = len(faltantes_en_b)
+    solo_en_b = len(faltantes_en_a)
+    comunes = len(set_a & set_b)
+
+    # Cálculo de porcentajes precisos
+    print("\n📊 RESULTADO DE LA COMPARACIÓN:")
+    print(f"   ✓ REGISTROS COMUNES: {comunes:,}")
+    print("      (Presentes en ambos archivos)")
+    print(f"   ✗ (A - B) Están en {nombre_a} pero NO en {nombre_b}: {solo_en_a:,} usuarios")
+    print(f"   ✗ (B - A) Están en {nombre_b} pero NO en {nombre_a}: {solo_en_b:,} usuarios")
+
+    # Guardar versiones completas con marcadores para referencia
+    reportes_dict[f'{nombre_a}_COMPLETO_CON_MARCADORES'] = df_a_marked.drop(columns=['__KEY__'])
+    reportes_dict[f'{nombre_b}_COMPLETO_CON_MARCADORES'] = df_b_marked.drop(columns=['__KEY__'])
+
+    # Primero: Mostrar TODOS - Faltantes consolidados
+    if (not faltantes_en_a.empty) or (not faltantes_en_b.empty):
+        df_todos_faltantes = pd.concat(
+            [faltantes_en_a.drop(columns=['__KEY__']), faltantes_en_b.drop(columns=['__KEY__'])],
+            ignore_index=True
+        ) if (not faltantes_en_a.empty and not faltantes_en_b.empty) else (
+            faltantes_en_b.drop(columns=['__KEY__']) if not faltantes_en_b.empty else faltantes_en_a.drop(columns=['__KEY__'])
+        )
+
+        if not df_todos_faltantes.empty:
+            reportes_dict['TODOS - Faltantes'] = df_todos_faltantes.copy()
+
+    # Segundo: Faltantes en B (con marcador)
+    if not faltantes_en_b.empty:
+        falt_b_clean = faltantes_en_b.drop(columns=['__KEY__'])
+        reportes_dict[f'Faltantes en {nombre_b}'] = falt_b_clean
+        reportes_dict['Faltantes en B'] = falt_b_clean
+
+        # Si hay columna de hoja origen, separar por hoja
+        if '__HOJA_ORIGEN__' in falt_b_clean.columns:
+            hojas_unicas = falt_b_clean['__HOJA_ORIGEN__'].unique()
+            for hoja in hojas_unicas:
+                df_hoja = falt_b_clean[falt_b_clean['__HOJA_ORIGEN__'] == hoja].copy()
+                if not df_hoja.empty:
+                    # Mantener todas las columnas, solo filtrar las filas faltantes
+                    reportes_dict[f'Faltantes en {hoja}'] = df_hoja
+                    print(f"  ✅ Faltantes en {hoja}       : {len(df_hoja):6} registros ({len(df_hoja)/len(df_b)*100:5.2f}% de {hoja})")
+    else:
+        reportes_dict['Faltantes en B'] = pd.DataFrame()
+
+    # Tercero: Faltantes en A (con marcador)
+    if not faltantes_en_a.empty:
+        falt_a_clean = faltantes_en_a.drop(columns=['__KEY__'])
+        reportes_dict[f'Faltantes en {nombre_a}'] = falt_a_clean
+        reportes_dict['Faltantes en A'] = falt_a_clean
+
+        # Si hay columna de hoja origen, separar por hoja
+        if '__HOJA_ORIGEN__' in falt_a_clean.columns:
+            hojas_unicas = falt_a_clean['__HOJA_ORIGEN__'].unique()
+            for hoja in hojas_unicas:
+                df_hoja = falt_a_clean[falt_a_clean['__HOJA_ORIGEN__'] == hoja].copy()
+                if not df_hoja.empty:
+                    # Mantener todas las columnas, solo filtrar las filas faltantes
+                    reportes_dict[f'Faltantes en {hoja}'] = df_hoja
+                    print(f"  ✅ Faltantes en {hoja}       : {len(df_hoja):6} registros ({len(df_hoja)/len(df_a)*100:5.2f}% de {hoja})")
+    else:
+        reportes_dict['Faltantes en A'] = pd.DataFrame()
+        
+    return faltantes_en_a, faltantes_en_b
+# ================================
+# FINAL
+# ==================================
+
+# ===========================================
+# DUPLICADOS
+# ==================================
+def analyze_duplicados(df_a: pd.DataFrame, df_b: pd.DataFrame, nombre_a: str, nombre_b: str, 
+                      key_desc_a: str, key_desc_b: str, key_a: str, key_b: str, reportes_dict: dict):
+    """Analiza y reporta registros duplicados en A y B"""
+    print("  ⏳ Identificando duplicados...")
+    print("\n  🔍 DEBUG - Análisis de duplicados:")
+    print(f"     Clave en {nombre_a}: '{key_desc_a}'")
+    print(f"     Clave en {nombre_b}: '{key_desc_b}'")
+    print(f"     Total valores en {nombre_a}: {df_a['__KEY__'].count():,}")
+    print(f"     Total valores únicos en {nombre_a}: {df_a['__KEY__'].nunique():,}")
+    print(f"     Total valores en {nombre_b}: {df_b['__KEY__'].count():,}")
+    print(f"     Total valores únicos en {nombre_b}: {df_b['__KEY__'].nunique():,}")
+
+    # Detectar duplicados por la columna RUT (key_a para archivo A, key_b para archivo B)
+    print(f"\n  ⏳ Buscando duplicados en {nombre_a}...")
+    duplicados_a = df_a[df_a['__KEY__'].duplicated(keep=False)].sort_values('__KEY__')
+    print(f"  ⏳ Buscando duplicados en {nombre_b}...")
+    duplicados_b = df_b[df_b['__KEY__'].duplicated(keep=False)].sort_values('__KEY__')
+
+    print("\n  📊 RESULTADOS:")
+    print(f"Duplicados en {nombre_a}: {len(duplicados_a):,} registros")
+    if not duplicados_a.empty:
+        ruts_duplicados_a = duplicados_a['__KEY__'].value_counts()
+        print(f"  → {len(ruts_duplicados_a)} identificadores diferentes con duplicados")
+        print(f"  → Máximas repeticiones: {ruts_duplicados_a.max()} veces")
+    else:
+        print(f"  ⚠️  No se encontraron duplicados en {nombre_a}")
+
+    print(f"\nDuplicados en {nombre_b}: {len(duplicados_b):,} registros")
+    if not duplicados_b.empty:
+        ruts_duplicados_b = duplicados_b['__KEY__'].value_counts()
+        print(f"  → {len(ruts_duplicados_b)} identificadores diferentes con duplicados")
+        print(f"  → Máximas repeticiones: {ruts_duplicados_b.max()} veces")
+    else:
+        print(f"  ⚠️  No se encontraron duplicados en {nombre_b}")
+
+    # Primero: Mostrar TODOS - Duplicados consolidados
+    if (not duplicados_a.empty) or (not duplicados_b.empty):
+        df_todos_duplicados = pd.concat(
+            [duplicados_a.drop(columns=['__KEY__']), duplicados_b.drop(columns=['__KEY__'])],
+            ignore_index=True
+        ) if (not duplicados_a.empty and not duplicados_b.empty) else (
+            duplicados_b.drop(columns=['__KEY__']) if not duplicados_b.empty else duplicados_a.drop(columns=['__KEY__'])
+        )
+
+        if not df_todos_duplicados.empty:
+            # Si estamos usando nombres combinados, no podemos filtrar por la columna clave original
+            if '__KEY__' in df_todos_duplicados.columns:
+                col_id = '__KEY__'
+            elif key_a in df_todos_duplicados.columns and key_a != '__KEY__':
+                col_id = key_a
+            elif key_b in df_todos_duplicados.columns and key_b != '__KEY__':
+                col_id = key_b
+            else:
+                col_id = df_todos_duplicados.columns[0]
+
+            try:
+                ruts_todos_dup = df_todos_duplicados[col_id].value_counts().sort_values(ascending=False)
+
+                print(f"\n📊 TODOS - Registros Duplicados ({len(df_todos_duplicados):,} registros):")
+                print("\n   🔍 Resumen de duplicados (Top 20):")
+                df_counts = ruts_todos_dup.head(20).reset_index()
+                df_counts.columns = ['IDENTIFICADOR', 'CANTIDAD']
+                df_counts['IDENTIFICADOR'] = df_counts['IDENTIFICADOR'].astype(str).str.replace('|', ' ', regex=False)
+                print(df_counts.to_string(index=False))
+            except KeyError:
+                pass
+
+            reportes_dict['TODOS - Duplicados'] = df_todos_duplicados.copy()
+
+    # Segundo: Duplicados en A
+    if not duplicados_a.empty:
+        ruts_dup_a = duplicados_a['__KEY__'].value_counts().sort_values(ascending=False)
+        print(f"\n1️⃣ Duplicados en {nombre_a} ({len(duplicados_a):,} registros | {len(ruts_dup_a)} únicos):")
+        print("\n   🔍 Identificadores duplicados (Top 20):")
+        df_counts = ruts_dup_a.head(20).reset_index()
+        df_counts.columns = ['IDENTIFICADOR', 'CANTIDAD']
+        df_counts['IDENTIFICADOR'] = df_counts['IDENTIFICADOR'].astype(str).str.replace('|', ' ', regex=False)
+        print(df_counts.to_string(index=False))
+        if len(ruts_dup_a) > 20: 
+            print(f"   ... y {len(ruts_dup_a) - 20} identificadores más")
+
+        # NUEVO: Extraer solo las diferencias entre duplicados
+        dup_a_diferencias = extract_duplicate_differences(duplicados_a, '__KEY__')
+        if not dup_a_diferencias.empty:
+            reportes_dict[f'Duplicados en {nombre_a}'] = dup_a_diferencias
+            reportes_dict['Duplicados en A'] = dup_a_diferencias
+            print(f"\n  ✅ Extraídas {len(dup_a_diferencias)} filas con diferencias en duplicados de {nombre_a}")
+        else:
+            dup_a_clean = duplicados_a.drop(columns=['__KEY__'])
+            reportes_dict[f'Duplicados en {nombre_a}'] = dup_a_clean
+            reportes_dict['Duplicados en A'] = dup_a_clean
+    else:
+        reportes_dict[f'Duplicados en {nombre_a}'] = pd.DataFrame()
+        reportes_dict['Duplicados en A'] = pd.DataFrame()
+
+    # Tercero: Duplicados en B
+    if not duplicados_b.empty:
+        ruts_dup_b = duplicados_b['__KEY__'].value_counts().sort_values(ascending=False)
+        print(f"\n2️⃣ Duplicados en {nombre_b} ({len(duplicados_b):,} registros | {len(ruts_dup_b)} únicos):")
+        print("\n   🔍 Identificadores duplicados (Top 20):")
+        df_counts = ruts_dup_b.head(20).reset_index()
+        df_counts.columns = ['IDENTIFICADOR', 'CANTIDAD']
+        df_counts['IDENTIFICADOR'] = df_counts['IDENTIFICADOR'].astype(str).str.replace('|', ' ', regex=False)
+        print(df_counts.to_string(index=False))
+        if len(ruts_dup_b) > 20:
+            print(f"   ... y {len(ruts_dup_b) - 20} identificadores más")
+
+        print("\n   📋 Primeros 10 registros duplicados:")
+        df_show = duplicados_b.drop(columns=['__KEY__']).head(10)
+        imprimir_tabla_bonita(df_show, None)
+
+        # NUEVO: Extraer solo las diferencias entre duplicados
+        dup_b_diferencias = extract_duplicate_differences(duplicados_b, '__KEY__')
+        if not dup_b_diferencias.empty:
+            reportes_dict[f'Duplicados en {nombre_b}'] = dup_b_diferencias
+            reportes_dict['Duplicados en B'] = dup_b_diferencias
+            print(f"\n  ✅ Extraídas {len(dup_b_diferencias)} filas con diferencias en duplicados de {nombre_b}")
+        else:
+            dup_b_clean = duplicados_b.drop(columns=['__KEY__'])
+            reportes_dict[f'Duplicados en {nombre_b}'] = dup_b_clean
+            reportes_dict['Duplicados en B'] = dup_b_clean
+    else:
+        reportes_dict[f'Duplicados en {nombre_b}'] = pd.DataFrame()
+        reportes_dict['Duplicados en B'] = pd.DataFrame()
+        
+    return duplicados_a, duplicados_b
+# ================================
+# FINAL
+# ==================================
+
+
+# ===========================================
+# INCOMPLETOS
+# ==================================
+def analyze_incompletos(df_a: pd.DataFrame, df_b: pd.DataFrame, nombre_a: str, nombre_b: str, key_a: str, key_b: str, reportes_dict: dict):
+    """Analiza y reporta registros incompletos"""
+    incompletos_a = mark_incomplete(df_a, exclude_cols=['__KEY__'])
+    incompletos_b = mark_incomplete(df_b, exclude_cols=['__KEY__'])
+
+    # Primero: Mostrar TODOS - Incompletos consolidados
+    if (not incompletos_a.empty) or (not incompletos_b.empty):
+        df_todos_incompletos = pd.concat(
+            [incompletos_a.drop(columns=['__KEY__']), incompletos_b.drop(columns=['__KEY__'])],
+            ignore_index=True
+        ) if (not incompletos_a.empty and not incompletos_b.empty) else (
+            incompletos_b.drop(columns=['__KEY__']) if not incompletos_b.empty else incompletos_a.drop(columns=['__KEY__'])
+        )
+
+        if not df_todos_incompletos.empty:
+            df_show = df_todos_incompletos.head(5)
+            df_show = format_dataframe_rut(df_show, key_a)
+            imprimir_tabla_bonita(df_show, f"📊 TODOS - Registros Incompletos ({len(df_todos_incompletos):,} registros):")
+            reportes_dict['TODOS - Incompletos'] = df_todos_incompletos.copy()
+
+    # Segundo: Incompletos en A
+    if not incompletos_a.empty:
+        df_show = incompletos_a.drop(columns=['__KEY__']).head(5)
+        df_show = format_dataframe_rut(df_show, key_a)
+        imprimir_tabla_bonita(df_show, f"1️⃣ Registros incompletos en {nombre_a} ({len(incompletos_a):,}):")
+        # Guardar datos completos sin transformación
+        reportes_dict[f'Incompletos en {nombre_a}'] = incompletos_a.drop(columns=['__KEY__'])
+        reportes_dict['Incompletos en A'] = incompletos_a.drop(columns=['__KEY__'])
+    else:
+        reportes_dict[f'Incompletos en {nombre_a}'] = pd.DataFrame()
+        reportes_dict['Incompletos en A'] = pd.DataFrame()
+
+    # Tercero: Incompletos en B
+    if not incompletos_b.empty:
+        df_show = incompletos_b.drop(columns=['__KEY__']).head(5)
+        df_show = format_dataframe_rut(df_show, key_b)
+        imprimir_tabla_bonita(df_show, f"2️⃣ Registros incompletos en {nombre_b} ({len(incompletos_b):,}):")
+        # Guardar datos completos sin transformación
+        reportes_dict[f'Incompletos en {nombre_b}'] = incompletos_b.drop(columns=['__KEY__'])
+        reportes_dict['Incompletos en B'] = incompletos_b.drop(columns=['__KEY__'])
+    else:
+        reportes_dict[f'Incompletos en {nombre_b}'] = pd.DataFrame()
+        reportes_dict['Incompletos en B'] = pd.DataFrame()
+        
+    return incompletos_a, incompletos_b
+# ================================
+# FINAL
+# ==================================
+
+
+def main(file_a: str, file_b: str, key: Optional[str] = None, sheet_a: Optional[str] = None,
         sheet_b: Optional[str] = None, tipos_analisis: Optional[list] = None, iden_config: Optional[dict] = None):
     """Función principal de comparación (soporta múltiples hojas)
-    
+
     Args:
         tipos_analisis: Lista de tipos de análisis a realizar ['duplicados', 'faltantes', 'incompletos']
         ¿Si es None, se realizan todos los análisis
     """
-    
+
     # Si no se especifican tipos de análisis, hacer todos
     if tipos_analisis is None:
         tipos_analisis = ['duplicados', 'faltantes', 'incompletos']
-    
+
     # Validar archivos
     if not os.path.exists(file_a) or not os.path.exists(file_b):
         print("❌ Error: Uno o ambos archivos no existen")
         return
-    
+
     # Verificar tamaño de archivos
     size_a_mb = os.path.getsize(file_a) / (1024 * 1024)
     size_b_mb = os.path.getsize(file_b) / (1024 * 1024)
-    
+
     # Extraer nombres de archivos (sin ruta, sin extensión)
     nombre_a = os.path.splitext(os.path.basename(file_a))[0]
     nombre_b = os.path.splitext(os.path.basename(file_b))[0]
-    
+
     print("\n📊 Información de archivos:")
     print(f"  {nombre_a}: {size_a_mb:.2f} MB")
     print(f"  {nombre_b}: {size_b_mb:.2f} MB")
-    
+
     if size_a_mb > 8 or size_b_mb > 8:
         print("  ⚡ Archivos grandes detectados - modo optimizado activado")
-    
+
     # Definir directorio de salida al inicio (mismo donde está el script)
     output_dir = '.'
-    
+
     # Listar hojas disponibles
     print("📋 Hojas disponibles:")
     sheets_a = get_xlsx_sheets(file_a)
     sheets_b = get_xlsx_sheets(file_b)
     print(f"  {nombre_a}: {sheets_a}")
     print(f"  {nombre_b}: {sheets_b}")
-    
+
     # Verificar si se deben procesar todas las hojas
     process_all_sheets_a = (sheet_a == 'ALL_SHEETS')
     process_all_sheets_b = (sheet_b == 'ALL_SHEETS')
-    
+
     # Cargar archivos (con soporte para múltiples hojas)
     if process_all_sheets_a:
         print(f"\n📂 Cargando TODAS las hojas de {nombre_a}...")
@@ -1521,8 +1943,13 @@ def main(file_a: str, file_b: str, key: Optional[str] = None, sheet_a: Optional[
         if not sheets_dict_a:
             print("❌ No se pudieron cargar las hojas del archivo A")
             return
-        # Concatenar todas las hojas
-        df_a = pd.concat(sheets_dict_a.values(), ignore_index=True)
+        # Concatenar todas las hojas AGREGANDO columna de origen
+        dfs_with_origin = []
+        for sheet_name, df in sheets_dict_a.items():
+            df_copy = df.copy()
+            df_copy['__HOJA_ORIGEN__'] = sheet_name
+            dfs_with_origin.append(df_copy)
+        df_a = pd.concat(dfs_with_origin, ignore_index=True)
         print(f"  ✓ Total combinado: {len(df_a):,} filas × {len(df_a.columns)} columnas")
         memory_usage = get_memory_usage(df_a)
         print(f"  💾 Memoria utilizada: {memory_usage}")
@@ -1541,15 +1968,20 @@ def main(file_a: str, file_b: str, key: Optional[str] = None, sheet_a: Optional[
         memory_mb = float(memory_usage.replace(' MB', ''))
         show_memory_warning(memory_mb)
     print(f"  Columnas: {', '.join(df_a.columns[:5])}{'...' if len(df_a.columns) > 5 else ''}")
-    
+
     if process_all_sheets_b:
         print(f"\n📂 Cargando TODAS las hojas de {nombre_b}...")
         sheets_dict_b = load_all_sheets(file_b)
         if not sheets_dict_b:
             print("❌ No se pudieron cargar las hojas del archivo B")
             return
-        # Concatenar todas las hojas
-        df_b = pd.concat(sheets_dict_b.values(), ignore_index=True)
+        # Concatenar todas las hojas AGREGANDO columna de origen
+        dfs_with_origin = []
+        for sheet_name, df in sheets_dict_b.items():
+            df_copy = df.copy()
+            df_copy['__HOJA_ORIGEN__'] = sheet_name
+            dfs_with_origin.append(df_copy)
+        df_b = pd.concat(dfs_with_origin, ignore_index=True)
         print(f"  ✓ Total combinado: {len(df_b):,} filas × {len(df_b.columns)} columnas")
         memory_usage = get_memory_usage(df_b)
         print(f"  💾 Memoria utilizada: {memory_usage}")
@@ -1567,10 +1999,10 @@ def main(file_a: str, file_b: str, key: Optional[str] = None, sheet_a: Optional[
         memory_mb = float(memory_usage.replace(' MB', ''))
         show_memory_warning(memory_mb)
     print(f"  Columnas: {', '.join(df_b.columns[:5])}{'...' if len(df_b.columns) > 5 else ''}")
-    
+
     # Detectar columnas clave (Priorizando Nombre + Apellidos)
     print("\n🔑 Configurando identificación de registros...")
-    
+
     key_series_a = None
     key_series_b = None
     key_type_a = ""
@@ -1587,16 +2019,16 @@ def main(file_a: str, file_b: str, key: Optional[str] = None, sheet_a: Optional[
     if key_series_a is None or key_series_b is None:
         if iden_config and iden_config.get('mode') == 'manual':
             print("  ⚠️ Falló la configuración personalizada en uno o ambos archivos. Intentando automático...")
-             
+
         print("  ⏳ Buscando columnas de nombres y apellidos (Automático)...")
         key_series_a, key_type_a, _ = generate_person_key(df_a, nombre_a)
         key_series_b, key_type_b, _ = generate_person_key(df_b, nombre_b)
-    
+
     key_a = "SISTEMA_DETECT"
     key_b = "SISTEMA_DETECT"
-    
+
     modo_identificacion = ""
-    
+
     if key_series_a is not None and key_series_b is not None:
         print("\n  ✅ IDENTIFICACIÓN POR NOMBRE EXITOSA")
         print(f"     Modo: {key_type_a} vs {key_type_b}")
@@ -1605,7 +2037,7 @@ def main(file_a: str, file_b: str, key: Optional[str] = None, sheet_a: Optional[
         # Guardamos descripción pero usamos __KEY__ como columna de operación
         key_desc_a = f"COMBINADA ({key_type_a})"
         key_desc_b = f"COMBINADA ({key_type_b})"
-        key_a = '__KEY__' 
+        key_a = '__KEY__'
         key_b = '__KEY__'
         modo_identificacion = "NOMBRE Y APELLIDOS"
     else:
@@ -1613,17 +2045,17 @@ def main(file_a: str, file_b: str, key: Optional[str] = None, sheet_a: Optional[
         print("\n  ⚠️ No se pudieron identificar nombres en ambos archivos. Usando método tradicional (RUT/ID).")
         key_a = auto_detect_key_column(df_a, key)
         key_b = auto_detect_key_column(df_b, key)
-        
+
         # Buscar mejor coincidencia
         key_a, key_b = find_matching_key_columns(df_a, df_b, key_a, key_b)
-        
+
         print(f"  {nombre_a} → Usando clave: '{key_a}'")
         print(f"  {nombre_b} → Usando clave: '{key_b}'")
-        
+
         # Normalizar valores clave tradicionales
-        df_a['__KEY__'] = df_a[key_a].astype(str).str.upper().str.strip().str.replace(r'\.0$', '', regex=True)
-        df_b['__KEY__'] = df_b[key_b].astype(str).str.upper().str.strip().str.replace(r'\.0$', '', regex=True)
-        
+        df_a['__KEY__'] = clean_string_for_key(df_a[key_a])
+        df_b['__KEY__'] = clean_string_for_key(df_b[key_b])
+
         key_desc_a = key_a
         key_desc_b = key_b
         modo_identificacion = f"COLUMNA INDIVIDUAL ({key_a})"
@@ -1631,14 +2063,14 @@ def main(file_a: str, file_b: str, key: Optional[str] = None, sheet_a: Optional[
     # Verificación de unicidad de la clave generada
     uniq_a = df_a['__KEY__'].nunique() / len(df_a) * 100
     uniq_b = df_b['__KEY__'].nunique() / len(df_b) * 100
-    
+
     print(f"\n  🔍 Calidad de la clave de identificación ({modo_identificacion}):")
     print(f"     {nombre_a}: {uniq_a:.1f}% registros únicos")
     print(f"     {nombre_b}: {uniq_b:.1f}% registros únicos")
-    
+
     if uniq_a < 80 or uniq_b < 80:
         print("     ⚠️ ADVERTENCIA: Hay muchos nombres repetidos. La comparación podría generar falsos positivos.")
-    
+
     # Análisis de diferencias (optimizado para grandes volúmenes)
     print(f"\n{'='*60}")
     print("📊 ANÁLISIS COMPARATIVO")
@@ -1646,72 +2078,12 @@ def main(file_a: str, file_b: str, key: Optional[str] = None, sheet_a: Optional[
     print(f"{'='*60}")
     print(f"Total en {nombre_a}: {len(df_a):,}")
     print(f"Total en {nombre_b}: {len(df_b):,}")
-    
-    # Usar sets para comparaciones rápidas en grandes volúmenes
-    set_b = set(df_b['__KEY__'].unique())
-    set_a = set(df_a['__KEY__'].unique())
-    
-    # Solo calcular faltantes si está en tipos_analisis
-    faltantes_en_b = pd.DataFrame()
-    faltantes_en_a = pd.DataFrame()
-    if 'faltantes' in tipos_analisis:
-        print("  ⏳ Generando índices de comparación...")
-        print("  ⏳ Calculando restas (A - B) y (B - A)...")
-        faltantes_en_b = df_a[~df_a['__KEY__'].isin(set_b)]
-        faltantes_en_a = df_b[~df_b['__KEY__'].isin(set_a)]
-        solo_en_a = len(faltantes_en_b)
-        solo_en_b = len(faltantes_en_a)
-        comunes = len(set_a & set_b)
-        
-        # Cálculo de porcentajes precisos
-        
-        print("\n📊 RESULTADO DE LA RESTA:")
-        print(f"   ❌ (A - B) Están en {nombre_a} pero NO en {nombre_b}: {solo_en_a:,} usuarios")
-        print(f"   ❌ (B - A) Están en {nombre_b} pero NO en {nombre_a}: {solo_en_b:,} usuarios")
-        print(f"   ✅ REGISTROS COMUNES: {comunes:,}")
-        print("      (Presentes en ambos archivos)")
-    
-    # Optimización: buscar duplicados usando vectorización (solo si está en tipos_analisis)
-    duplicados_a = pd.DataFrame()
-    duplicados_b = pd.DataFrame()
-    if 'duplicados' in tipos_analisis:
-        print("  ⏳ Identificando duplicados...")
-        print("\n  🔍 DEBUG - Análisis de duplicados:")
-        print(f"     Clave en {nombre_a}: '{key_desc_a}'")
-        print(f"     Clave en {nombre_b}: '{key_desc_b}'")
-        print(f"     Total valores en {nombre_a}: {df_a['__KEY__'].count():,}")
-        print(f"     Total valores únicos en {nombre_a}: {df_a['__KEY__'].nunique():,}")
-        print(f"     Total valores en {nombre_b}: {df_b['__KEY__'].count():,}")
-        print(f"     Total valores únicos en {nombre_b}: {df_b['__KEY__'].nunique():,}")
-        
-        # Detectar duplicados por la columna RUT (key_a para archivo A, key_b para archivo B)
-        print(f"\n  ⏳ Buscando duplicados en {nombre_a}...")
-        duplicados_a = df_a[df_a['__KEY__'].duplicated(keep=False)].sort_values('__KEY__')
-        print(f"  ⏳ Buscando duplicados en {nombre_b}...")
-        duplicados_b = df_b[df_b['__KEY__'].duplicated(keep=False)].sort_values('__KEY__')
-        
-        print("\n  📊 RESULTADOS:")
-        print(f"Duplicados en {nombre_a}: {len(duplicados_a):,} registros")
-        if not duplicados_a.empty:
-            ruts_duplicados_a = duplicados_a['__KEY__'].value_counts()
-            print(f"  → {len(ruts_duplicados_a)} identificadores diferentes con duplicados")
-            print(f"  → Máximas repeticiones: {ruts_duplicados_a.max()} veces")
-        else:
-            print(f"  ⚠️  No se encontraron duplicados en {nombre_a}")
-        
-        print(f"\nDuplicados en {nombre_b}: {len(duplicados_b):,} registros")
-        if not duplicados_b.empty:
-            ruts_duplicados_b = duplicados_b['__KEY__'].value_counts()
-            print(f"  → {len(ruts_duplicados_b)} identificadores diferentes con duplicados")
-            print(f"  → Máximas repeticiones: {ruts_duplicados_b.max()} veces")
-        else:
-            print(f"  ⚠️  No se encontraron duplicados en {nombre_b}")
-    
+
     # Generar reportes
     print(f"\n{'='*60}")
     print("💾 GENERANDO REPORTES")
     print(f"{'='*60}\n")
-    
+
     # Diccionario para almacenar todos los reportes
     reportes_dict = {}
     # Guardar nombres para títulos dinámicos
@@ -1719,223 +2091,82 @@ def main(file_a: str, file_b: str, key: Optional[str] = None, sheet_a: Optional[
     reportes_dict['_NOMBRE_B'] = nombre_b
     reportes_dict['_TOTAL_A'] = len(df_a)
     reportes_dict['_TOTAL_B'] = len(df_b)
-    
-    # Procesar FALTANTES solo si está en tipos_analisis
+
+    # Inicializar variables para diagnóstico por si no se ejecutan los análisis
+    faltantes_en_a = pd.DataFrame()
+    faltantes_en_b = pd.DataFrame()
+    duplicados_a = pd.DataFrame()
+    duplicados_b = pd.DataFrame()
+    incompletos_a = pd.DataFrame()
+    incompletos_b = pd.DataFrame()
+
+    # 1. ANALISIS FALTANTES
     if 'faltantes' in tipos_analisis:
-        # Primero: Mostrar TODOS - Faltantes consolidados
-        if (not faltantes_en_a.empty) or (not faltantes_en_b.empty):
-            df_todos_faltantes = pd.concat(
-                [faltantes_en_a.drop(columns=['__KEY__']), faltantes_en_b.drop(columns=['__KEY__'])],
-                ignore_index=True
-            ) if (not faltantes_en_a.empty and not faltantes_en_b.empty) else (
-                faltantes_en_b.drop(columns=['__KEY__']) if not faltantes_en_b.empty else faltantes_en_a.drop(columns=['__KEY__'])
-            )
-            
-            if not df_todos_faltantes.empty:
-                reportes_dict['TODOS - Faltantes'] = df_todos_faltantes.copy()
-        
-        # Segundo: Faltantes en B
-        if not faltantes_en_b.empty:
-            reportes_dict[f'Faltantes en {nombre_b}'] = faltantes_en_b.drop(columns=['__KEY__'])
-            reportes_dict['Faltantes en B'] = faltantes_en_b.drop(columns=['__KEY__'])
-        else:
-            reportes_dict['Faltantes en B'] = pd.DataFrame()
-        
-        # Tercero: Faltantes en A
-        if not faltantes_en_a.empty:
-            reportes_dict[f'Faltantes en {nombre_a}'] = faltantes_en_a.drop(columns=['__KEY__'])
-            reportes_dict['Faltantes en A'] = faltantes_en_a.drop(columns=['__KEY__'])
-        else:
-            reportes_dict['Faltantes en A'] = pd.DataFrame()
+        faltantes_en_a, faltantes_en_b = analyze_faltantes(df_a, df_b, nombre_a, nombre_b, reportes_dict)
     else:
         reportes_dict['Faltantes en B'] = pd.DataFrame()
         reportes_dict['Faltantes en A'] = pd.DataFrame()
-    
-    # Procesar DUPLICADOS solo si está en tipos_analisis
+
+    # 2. ANALISIS DUPLICADOS
     if 'duplicados' in tipos_analisis:
-        # Primero: Mostrar TODOS - Duplicados consolidados
-        if (not duplicados_a.empty) or (not duplicados_b.empty):
-            df_todos_duplicados = pd.concat(
-                [duplicados_a.drop(columns=['__KEY__']), duplicados_b.drop(columns=['__KEY__'])],
-                ignore_index=True
-            ) if (not duplicados_a.empty and not duplicados_b.empty) else (
-                duplicados_b.drop(columns=['__KEY__']) if not duplicados_b.empty else duplicados_a.drop(columns=['__KEY__'])
-            )
-            
-            if not df_todos_duplicados.empty:
-                # Si estamos usando nombres combinados, no podemos filtrar por la columna clave original
-                if '__KEY__' in df_todos_duplicados.columns:
-                    col_id = '__KEY__'
-                elif key_a in df_todos_duplicados.columns and key_a != '__KEY__':
-                    col_id = key_a
-                elif key_b in df_todos_duplicados.columns and key_b != '__KEY__':
-                    col_id = key_b
-                else:
-                    # Fallback a la primera columna
-                    col_id = df_todos_duplicados.columns[0]
-                
-                try:
-                    ruts_todos_dup = df_todos_duplicados[col_id].value_counts().sort_values(ascending=False)
-                    
-                    print(f"\n📊 TODOS - Registros Duplicados ({len(df_todos_duplicados):,} registros):")
-                    print("\n   🔍 Resumen de duplicados (Top 20):")
-                    df_counts = ruts_todos_dup.head(20).reset_index()
-                    df_counts.columns = ['IDENTIFICADOR', 'CANTIDAD']
-                    # Limpiar visualmente para que se vea más ordenado
-                    df_counts['IDENTIFICADOR'] = df_counts['IDENTIFICADOR'].astype(str).str.replace('|', ' ', regex=False)
-                    print(df_counts.to_string(index=False))
-                except KeyError:
-                    pass
-                
-                reportes_dict['TODOS - Duplicados'] = df_todos_duplicados.copy()
-        
-        # Segundo: Duplicados en A
-        if not duplicados_a.empty:
-            # Agrupar por RUT para mostrar estadísticas
-            ruts_dup_a = duplicados_a['__KEY__'].value_counts().sort_values(ascending=False)
-            
-            print(f"\n1️⃣ Duplicados en {nombre_a} ({len(duplicados_a):,} registros | {len(ruts_dup_a)} únicos):")
-            print("\n   🔍 Identificadores duplicados (Top 20):")
-            df_counts = ruts_dup_a.head(20).reset_index()
-            df_counts.columns = ['IDENTIFICADOR', 'CANTIDAD']
-            # Limpiar visualmente
-            df_counts['IDENTIFICADOR'] = df_counts['IDENTIFICADOR'].astype(str).str.replace('|', ' ', regex=False)
-            print(df_counts.to_string(index=False))
-            
-            if len(ruts_dup_a) > 20:
-                print(f"   ... y {len(ruts_dup_a) - 20} identificadores más")
-            
-            # Guardar datos completos sin transformación
-            reportes_dict[f'Duplicados en {nombre_a}'] = duplicados_a.drop(columns=['__KEY__'])
-            reportes_dict['Duplicados en A'] = duplicados_a.drop(columns=['__KEY__'])
-        else:
-            reportes_dict[f'Duplicados en {nombre_a}'] = pd.DataFrame()
-            reportes_dict['Duplicados en A'] = pd.DataFrame()
-        
-        # Tercero: Duplicados en B
-        if not duplicados_b.empty:
-            # Agrupar por RUT para mostrar estadísticas
-            ruts_dup_b = duplicados_b['__KEY__'].value_counts().sort_values(ascending=False)
-            
-            print(f"\n2️⃣ Duplicados en {nombre_b} ({len(duplicados_b):,} registros | {len(ruts_dup_b)} únicos):")
-            print("\n   🔍 Identificadores duplicados (Top 20):")
-            df_counts = ruts_dup_b.head(20).reset_index()
-            df_counts.columns = ['IDENTIFICADOR', 'CANTIDAD']
-            # Limpiar visualmente
-            df_counts['IDENTIFICADOR'] = df_counts['IDENTIFICADOR'].astype(str).str.replace('|', ' ', regex=False)
-            print(df_counts.to_string(index=False))
-            
-            if len(ruts_dup_b) > 20:
-                print(f"   ... y {len(ruts_dup_b) - 20} identificadores más")
-            
-            print("\n   📋 Primeros 10 registros duplicados:")
-            df_show = duplicados_b.drop(columns=['__KEY__']).head(10)
-            # df_show = format_dataframe_rut(df_show, key_b) # Deshabilitado temporalmente si key_b es __KEY__
-            imprimir_tabla_bonita(df_show, None)
-            
-            # Guardar datos completos sin transformación
-            reportes_dict[f'Duplicados en {nombre_b}'] = duplicados_b.drop(columns=['__KEY__'])
-            reportes_dict['Duplicados en B'] = duplicados_b.drop(columns=['__KEY__'])
-        else:
-            reportes_dict[f'Duplicados en {nombre_b}'] = pd.DataFrame()
-            reportes_dict['Duplicados en B'] = pd.DataFrame()
+        # Nota: La función analyze_duplicados ya maneja el llenado de reportes_dict
+        duplicados_a, duplicados_b = analyze_duplicados(df_a, df_b, nombre_a, nombre_b, 
+                                                      key_desc_a, key_desc_b, key_a, key_b, reportes_dict)
     else:
         reportes_dict['Duplicados en A'] = pd.DataFrame()
         reportes_dict['Duplicados en B'] = pd.DataFrame()
         reportes_dict[f'Duplicados en {nombre_a}'] = pd.DataFrame()
         reportes_dict[f'Duplicados en {nombre_b}'] = pd.DataFrame()
-    
-    # Procesar INCOMPLETOS solo si está en tipos_analisis
-    incompletos_a = pd.DataFrame()
-    incompletos_b = pd.DataFrame()
+
+    # 3. ANALISIS INCOMPLETOS
     if 'incompletos' in tipos_analisis:
-        incompletos_a = mark_incomplete(df_a, exclude_cols=['__KEY__'])
-        incompletos_b = mark_incomplete(df_b, exclude_cols=['__KEY__'])
-        
-        # Primero: Mostrar TODOS - Incompletos consolidados
-        if (not incompletos_a.empty) or (not incompletos_b.empty):
-            df_todos_incompletos = pd.concat(
-                [incompletos_a.drop(columns=['__KEY__']), incompletos_b.drop(columns=['__KEY__'])],
-                ignore_index=True
-            ) if (not incompletos_a.empty and not incompletos_b.empty) else (
-                incompletos_b.drop(columns=['__KEY__']) if not incompletos_b.empty else incompletos_a.drop(columns=['__KEY__'])
-            )
-            
-            if not df_todos_incompletos.empty:
-                df_show = df_todos_incompletos.head(5)
-                df_show = format_dataframe_rut(df_show, key_a)
-                imprimir_tabla_bonita(df_show, f"📊 TODOS - Registros Incompletos ({len(df_todos_incompletos):,} registros):")
-                reportes_dict['TODOS - Incompletos'] = df_todos_incompletos.copy()
-        
-        # Segundo: Incompletos en A
-        if not incompletos_a.empty:
-            df_show = incompletos_a.drop(columns=['__KEY__']).head(5)
-            df_show = format_dataframe_rut(df_show, key_a)
-            imprimir_tabla_bonita(df_show, f"1️⃣ Registros incompletos en {nombre_a} ({len(incompletos_a):,}):")
-            # Guardar datos completos sin transformación
-            reportes_dict[f'Incompletos en {nombre_a}'] = incompletos_a.drop(columns=['__KEY__'])
-            reportes_dict['Incompletos en A'] = incompletos_a.drop(columns=['__KEY__'])
-        else:
-            reportes_dict[f'Incompletos en {nombre_a}'] = pd.DataFrame()
-            reportes_dict['Incompletos en A'] = pd.DataFrame()
-        
-        # Tercero: Incompletos en B
-        if not incompletos_b.empty:
-            df_show = incompletos_b.drop(columns=['__KEY__']).head(5)
-            df_show = format_dataframe_rut(df_show, key_b)
-            imprimir_tabla_bonita(df_show, f"2️⃣ Registros incompletos en {nombre_b} ({len(incompletos_b):,}):")
-            # Guardar datos completos sin transformación
-            reportes_dict[f'Incompletos en {nombre_b}'] = incompletos_b.drop(columns=['__KEY__'])
-            reportes_dict['Incompletos en B'] = incompletos_b.drop(columns=['__KEY__'])
-        else:
-            reportes_dict[f'Incompletos en {nombre_b}'] = pd.DataFrame()
-            reportes_dict['Incompletos en B'] = pd.DataFrame()
+        incompletos_a, incompletos_b = analyze_incompletos(df_a, df_b, nombre_a, nombre_b, key_a, key_b, reportes_dict)
     else:
         reportes_dict['Incompletos en A'] = pd.DataFrame()
         reportes_dict['Incompletos en B'] = pd.DataFrame()
         reportes_dict[f'Incompletos en {nombre_a}'] = pd.DataFrame()
         reportes_dict[f'Incompletos en {nombre_b}'] = pd.DataFrame()
-    
+
     # Crear tablas consolidadas por categoría - ESTO YA ESTÁ HECHO DIRECTAMENTE EN REPORTES_DICT
     # Los datos TODOS ya se guardaron en reportes_dict como 'TODOS - Faltantes', etc.
-    
+
     # Análisis de datos nulos (nuevas funcionalidades)
     print(f"\n{'='*60}")
     print("📋 ANÁLISIS DE DATOS NULOS/FALTANTES")
     print(f"{'='*60}")
-    
+
     # Información sobre nulidades en A
     null_info_a = find_null_data_columns(df_a, exclude_cols=['__KEY__', key_a])
     print_null_stats_table(null_info_a, f"{nombre_a} - Análisis de Nulidades")
-    
+
     # Información sobre nulidades en B
     null_info_b = find_null_data_columns(df_b, exclude_cols=['__KEY__', key_b])
     print_null_stats_table(null_info_b, f"{nombre_b} - Análisis de Nulidades")
-    
+
     # NO INCLUIMOS "Usuarios con datos faltantes" pues muestra columnas resumidas
     # Los datos faltantes ya están en 'TODOS - Faltantes' y 'Faltantes en A/B' con columnas completas
-    
+
     # === ANÁLISIS DE PRIORIDAD / DIAGNÓSTICO (Solicitado) ===
     print(f"\n{'='*60}")
     print("🏥 DIAGNÓSTICO PRIORITARIO")
     print(f"{'='*60}")
-    
+
     diagnostico_rows = []
     umb_prioridad = 85.0
-    
+
     # Función auxiliar para evaluar y agregar diagnóstico
     def evaluar_diagnostico(df_target, nombre_df, tipo_problema, total_referencia, mensaje_extra=""):
         if df_target.empty:
             return
-            
+
         cnt = len(df_target)
         pct = (cnt / total_referencia * 100) if total_referencia > 0 else 0.0
-        
+
         if pct > umb_prioridad:
             print(f"  ⚠️  ALERTA: Alta tasa de {tipo_problema} en {nombre_df} ({pct:.1f}%)")
             obs = (f"El documento tiene una alta variedad de {tipo_problema}, por lo tanto los datos "
                    f"serían muchos (>85%). {mensaje_extra}")
-            
+
             diagnostico_rows.append({
                 'TIPO': tipo_problema.upper(),
                 'ARCHIVO': nombre_df,
@@ -1949,9 +2180,9 @@ def main(file_a: str, file_b: str, key: Optional[str] = None, sheet_a: Optional[
     # 1. Evaluar Faltantes (Datos en A que no están en B -> Faltantes en B)
     if 'faltantes' in tipos_analisis:
         # Faltantes en B (A - B): Estan en A pero faltan en B
-        evaluar_diagnostico(faltantes_en_b, nombre_b, "faltantes (datos no encontrados)", len(df_a), 
+        evaluar_diagnostico(faltantes_en_b, nombre_b, "faltantes (datos no encontrados)", len(df_a),
                            f"Datos presentes en {nombre_a} pero ausentes en {nombre_b}.")
-        
+
         # Faltantes en A (B - A): Sobran en B (faltantes en A)
         evaluar_diagnostico(faltantes_en_a, nombre_a, "datos sobrantes (no en base)", len(df_b),
                            f"Datos presentes en {nombre_b} pero ausentes en {nombre_a}.")
@@ -1973,7 +2204,7 @@ def main(file_a: str, file_b: str, key: Optional[str] = None, sheet_a: Optional[
         # Asegurar que existan las columnas
         existing_cols = [c for c in cols_order if c in df_diag.columns] + [c for c in df_diag.columns if c not in cols_order]
         df_diag = df_diag[existing_cols]
-        
+
         reportes_dict['DIAGNOSTICO_PRIORITARIO'] = df_diag
         imprimir_tabla_bonita(df_diag, "RESUMEN DIAGNÓSTICO PRIORITARIO")
     else:
@@ -1981,11 +2212,11 @@ def main(file_a: str, file_b: str, key: Optional[str] = None, sheet_a: Optional[
 
     # Guardar todos los reportes en un único archivo Excel
     ruta_guardada = save_outputs_single_file(reportes_dict, output_dir, tipos_analisis)
-    
+
     if not ruta_guardada:
         print("\n❌ No se pudo completar la generación del reporte.")
         print("   Revisa los mensajes de error anteriores para más detalles.")
-    
+
     input("\nPresione Enter para volver al menú principal...")
 
 
@@ -2043,31 +2274,31 @@ def main_multiple(lista_archivos: list, tipos_analisis: Optional[list] = None):
     """
     Compara múltiples archivos de la lista.
     Realiza comparaciones de a pares.
-    
+
     Args:
         tipos_analisis: Lista de tipos de análisis a realizar ['duplicados', 'faltantes', 'incompletos']
     """
-    if len(lista_archivos) < 2: 
+    if len(lista_archivos) < 2:
         print("❌ Se necesitan mínimo 2 archivos")
         return
-    
+
     # Validar que todos existan
     for archivo in lista_archivos:
         if not os.path.exists(archivo):
             print(f"❌ No encontrado: {archivo}")
             return
-    
+
     # Comparar de forma secuencial: A vs B, A vs C, A vs D, etc.
     for i in range(len(lista_archivos) - 1):
         file_a = lista_archivos[0]  # Siempre comparar con el primero
         file_b = lista_archivos[i + 1]
-        
+
         print(f"\n{'='*70}")
         print(f"📊 COMPARACIÓN {i + 1}/{len(lista_archivos) - 1}")
         print(f"   Archivo A: {os.path.basename(file_a)}")
         print(f"   Archivo B: {os.path.basename(file_b)}")
         print(f"{'='*70}")
-        
+
         try:
             main(file_a, file_b, key=None, sheet_a=None, sheet_b=None, tipos_analisis=tipos_analisis)
         except Exception as e:  # pylint: disable=W0718
@@ -2080,7 +2311,7 @@ def main_multiple(lista_archivos: list, tipos_analisis: Optional[list] = None):
             print("\nDetalle completo del error:")
             traceback.print_exc()
             print(f"\n{'='*70}")
-            
+
             if i < len(lista_archivos) - 2:
                 print(f"⚠️ Quedan {len(lista_archivos) - 2 - i} comparaciones pendientes")
                 print(f"\n{'='*70}")
@@ -2090,7 +2321,7 @@ def main_multiple(lista_archivos: list, tipos_analisis: Optional[list] = None):
                     return
             else:
                 input("\n📌 Presione Enter para continuar...")
-    
+
     print("\n✅ Todas las comparaciones completadas.")
 
 
@@ -2104,27 +2335,27 @@ def run_app():
         print("  2. Seleccion archivo interactiva (2 archivos)")
         print("  3. Seleccion archivo múltiple (3+ archivos)")
         print("  x. Detener programa")
-        
+
         opcion_menu = input("\nEscribe tu opción (1, 2, 3, x): ").strip().lower()
         if opcion_menu == 'x':
             print("\n👋 Saliendo del programa...")
             sys.exit()
-        
+
         if opcion_menu == "1" or opcion_menu == "2":
             if opcion_menu == "1":
                 result = interactive_menu_individual_selection()
             else:
                 result = interactive_menu()
-            
+
             if result[0] == "":
                 continue
-            
+
             file_a, file_b, key, sheet_a, sheet_b, tipos_analisis_main, iden_config = result
-            
+
             clear_screen()
             print_header()
             print("⏳ Procesando comparación...\n")
-            
+
             try:
                 main(file_a, file_b, key, sheet_a, sheet_b, tipos_analisis_main, iden_config)
             except Exception as e:  # pylint: disable=W0718
@@ -2144,7 +2375,7 @@ def run_app():
                 print("\nPuedes scrollear hacia arriba para ver más detalles del error")
                 print(f"{'='*70}")
                 input("\n📌 Presione Enter cuando haya terminado de leer el error...")
-                
+
                 while True:
                     print(f"\n{'='*70}")
                     respuesta_menu = input("¿Deseas volver al menú principal? (Y/N): ").strip().upper()
@@ -2160,19 +2391,19 @@ def run_app():
                         print(f"{'='*70}")
                     else:
                         print("Por favor responde Y (Sí) o N (No)")
-        
+
         elif opcion_menu == "3":
             # Selección múltiple con ventanas
             lista_main = menu_seleccion_archivos()
-            
+
             if lista_main and len(lista_main) >= 2:
                 # Por defecto seleccionamos todos, el filtrado se hace al final
                 tipos_analisis_main = None
-                
+
                 clear_screen()
                 print_header()
                 print("⏳ Procesando comparaciones múltiples...\n")
-                
+
                 try:
                     main_multiple(lista_main, tipos_analisis_main)
                 except Exception as e:  # pylint: disable=W0718
@@ -2192,7 +2423,7 @@ def run_app():
                     print("\nPuedes scrollear hacia arriba para ver más detalles del error")
                     print(f"{'='*70}")
                     input("\n📌 Presione Enter cuando haya terminado de leer el error...")
-                    
+
                     while True:
                         print(f"\n{'='*70}")
                         respuesta_menu = input("¿Deseas volver al menú principal? (Y/N): ").strip().upper()
@@ -2211,14 +2442,14 @@ def run_app():
             else:
                 print("❌ Operación cancelada.")
                 input("\nPresione Enter para volver al menú principal...")
-        
+
         elif opcion_menu == "4":
             clear_screen()
             print_header()
             print("👋 ¡Hasta luego!")
             break
 
-        
+
         else:
             print(f"\n{'='*70}")
             print(f"❌ Opción no válida: '{opcion_menu}'")

@@ -1,0 +1,23 @@
+{
+    "python.linting.enabled": true,
+    "python.linting.pylintEnabled": true,
+    "python.linting.pylintUseMinimalCheckers": false,
+
+    // Configurar Pylance para que NO reporte ciertos errores
+    "python.analysis.diagnosticSeverityOverrides": {
+        "reportTrailingWhitespace": "none",
+        "reportUnnecessarySemicolon": "none"
+    },
+
+    // Deshabilitar el linter de Pylance - solo usar Pylint que respeta .pylintrc
+    "python.analysis.typeCheckingMode": "off",
+
+    // Opcional: Formateo automático al guardar (elimina trailing whitespace)
+    // Descomenta la siguiente línea si quieres que se corrija automáticamente
+    // "files.trimTrailingWhitespace": true,
+
+    // Mostrar solo errores de Pylint (que respeta .pylintrc con max-line-length=580)
+    "python.linting.pylintArgs": [
+        "--rcfile=${workspaceFolder}/datos_paciente/.pylintrc"
+    ]
+}
