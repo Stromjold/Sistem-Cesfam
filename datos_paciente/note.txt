@@ -1,6 +1,0 @@
-haremos esto paso a paso
-
-
-1. revisar los archivos 
-
-- se vera la cantidad de datos que tenga 
